@@ -39,9 +39,9 @@
   digital pin 52 - left stepper motor step pin
   digital pin 53 - left stepper motor direction pin
 
-  digital pin 14 - red LED in series with 220 ohm resistor
-  digital pin 15 - green LED in series with 220 ohm resistor
-  digital pin 16 - yellow LED in series with 220 ohm resistor
+  digital pin 5 - red LED in series with 220 ohm resistor
+  digital pin 6 - green LED in series with 220 ohm resistor
+  digital pin 7 - yellow LED in series with 220 ohm resistor
 
 
   INSTALL THE LIBRARY
@@ -68,6 +68,13 @@ const int stepTime = 500; //delay time between high and low on step pin
 #define stepperEnTrue false //variable for enabling stepper motor
 #define stepperEnFalse true //variable for disabling stepper motor
 
+#define stepsPerRev 800
+#define wheelDiameter 3.375 //diameter of the wheel in inches
+#define stepsToInches wheelDiameter*PI/stepsPerRev
+#define inchesToSteps stepsPerRev/(wheelDiameter*PI)
+
+#define fwdSpeed 1000
+
 AccelStepper stepperRight(AccelStepper::DRIVER, rtStepPin, rtDirPin);//create instance of right stepper motor object (2 driver pins, low to high transition step pin 52, direction input pin 53 (high means forward)
 AccelStepper stepperLeft(AccelStepper::DRIVER, ltStepPin, ltDirPin);//create instance of left stepper motor object (2 driver pins, step pin 50, direction input pin 51)
 MultiStepper steppers;//create instance to control multiple steppers at the same time
@@ -83,9 +90,9 @@ int error;
 byte type;
 byte vibrate;
 
-#define enableLED 13        //stepper enabled LED
-#define redLED 5           //red LED for displaying states
-#define grnLED 6         //green LED for displaying states
+#define enableLED 13    //stepper enabled LED
+#define redLED 5        //red LED for displaying states
+#define grnLED 6        //green LED for displaying states
 #define ylwLED 7        //yellow LED for displaying states
 
 #define pauseTime 2500 //time before robot moves
@@ -173,22 +180,24 @@ void setup()
 unsigned long last_read = 0;
 void loop()
 {
-  //Every 50 milliseconds, poll the PS2 controller and get the latest teleop commands
-  int temp = millis() - last_read;
-  if(temp > 50){
-    readController();
-    last_read = millis();
-  }
-  //Run the stepper motors at the speed they were set to in the readController() function
-  stepperRight.runSpeed();
-  stepperLeft.runSpeed();
+//  //Every 50 milliseconds, poll the PS2 controller and get the latest teleop commands
+//  int temp = millis() - last_read;
+//  if(temp > 50){
+//    readController();
+//    last_read = millis();
+//  }
+//  //Run the stepper motors at the speed they were set to in the readController() function
+//  stepperRight.runSpeed();
+//  stepperLeft.runSpeed();
 
   //uncomment each function one at a time to see what the code does
 //  move1();//call move back and forth function
 //  move2();//call move back and forth function with AccelStepper library functions
 //  move3();//call move back and forth function with MultiStepper library functions
-  //move4(); //move to target position with 2 different speeds
-  //move5(); //move continuously with 2 different speeds
+//  move4(); //move to target position with 2 different speeds
+//  move5(); //move continuously with 2 different speeds
+  forward(-24);
+  delay(5000);
 }
 
 /*
@@ -298,11 +307,10 @@ void move3() {
 
 /*this function will move to target at 2 different speeds*/
 void move4() {
-
   long positions[2]; // Array of desired stepper positions
-  int leftPos = 5000;//right motor absolute position
+  int leftPos = 1500;//right motor absolute position
   int rightPos = 1000;//left motor absolute position
-  int leftSpd = 5000;//right motor speed
+  int leftSpd = 1500;//right motor speed
   int rightSpd = 1000; //left motor speed
 
   digitalWrite(redLED, HIGH);//turn on red LED
@@ -310,18 +318,20 @@ void move4() {
   digitalWrite(ylwLED, LOW);//turn off yellow LED
 
   //Uncomment the next 4 lines for absolute movement
-  //stepperLeft.setCurrentPosition(0);//set left wheel position to zero
-  //stepperRight.setCurrentPosition(0);//set right wheel position to zero
-  //stepperLeft.moveTo(leftPos);//move left wheel to absolute position
-  //stepperRight.moveTo(rightPos);//move right wheel to absolute position
+  stepperLeft.setCurrentPosition(0);//set left wheel position to zero
+  stepperRight.setCurrentPosition(0);//set right wheel position to zero
+  stepperLeft.moveTo(leftPos);//move left wheel to absolute position
+  stepperRight.moveTo(rightPos);//move right wheel to absolute position
 
   //Unomment the next 2 lines for relative movement
-  stepperLeft.move(leftPos);//move left wheel to relative position
-  stepperRight.move(rightPos);//move right wheel to relative position
+//  stepperLeft.move(leftPos);//move left wheel to relative position
+//  stepperRight.move(rightPos);//move right wheel to relative position
 
   stepperLeft.setSpeed(leftSpd);//set left motor speed
   stepperRight.setSpeed(rightSpd);//set right motor speed
-  runAtSpeedToPosition();//run at speed to target position
+  //runAtSpeedToPosition();//run at speed to target position
+  steppers.runSpeedToPosition(); // Blocks until all are in position
+  delay(1000);
 }
 
 /*This function will move continuously at 2 different speeds*/
@@ -389,9 +399,28 @@ void spin(int direction) {
 void turn(int direction) {
 }
 /*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+  forward(double distance)
+  This function takes in a distance (in inches) and runs the left and right steppers 
+  at the same constant speed until the robot has traveled the given distance in the
+  forward direction.
+
+  BLOCKING FUNCTION
 */
-void forward(int distance) {
+void forward(double distance) {
+  int steps = int(distance*inchesToSteps);
+  stepperLeft.setCurrentPosition(0);
+  stepperRight.setCurrentPosition(0);
+  stepperLeft.moveTo(steps);
+  stepperRight.moveTo(steps);
+  if(distance < 0){
+    stepperLeft.setSpeed(-fwdSpeed);
+    stepperRight.setSpeed(-fwdSpeed);
+  } else {
+    stepperLeft.setSpeed(fwdSpeed);
+    stepperRight.setSpeed(fwdSpeed);
+  }
+
+  steppers.runSpeedToPosition(); // Blocks until all are in position
 }
 /*
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
