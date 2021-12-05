@@ -70,10 +70,18 @@ const int stepTime = 500; //delay time between high and low on step pin
 
 #define stepsPerRev 800
 #define wheelDiameter 3.375 //diameter of the wheel in inches
+#define wheelDist 8.57      //distance between the center of the wheels in inches
 #define stepsToInches wheelDiameter*PI/stepsPerRev
 #define inchesToSteps stepsPerRev/(wheelDiameter*PI)
+#define rightSpeedAdjustment 1.0
+
+//Used for spinning (Both wheels going opposite direction)
+#define spinDegreesToSteps 5.65
+#define pivotDegreesToSteps (2*PI*wheelDist*inchesToSteps)/360.0
 
 #define fwdSpeed 1000
+#define revSpeed -1000
+#define spinSpeed 500
 
 AccelStepper stepperRight(AccelStepper::DRIVER, rtStepPin, rtDirPin);//create instance of right stepper motor object (2 driver pins, low to high transition step pin 52, direction input pin 53 (high means forward)
 AccelStepper stepperLeft(AccelStepper::DRIVER, ltStepPin, ltDirPin);//create instance of left stepper motor object (2 driver pins, step pin 50, direction input pin 51)
@@ -196,7 +204,7 @@ void loop()
 //  move3();//call move back and forth function with MultiStepper library functions
 //  move4(); //move to target position with 2 different speeds
 //  move5(); //move continuously with 2 different speeds
-  forward(-24);
+  turn(true,9000,12);
   delay(5000);
 }
 
@@ -383,21 +391,84 @@ void runAtSpeed ( void ) {
 
 /*
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+  pivoting left is clockwise
+  pivoting right is counter-clockwise
 */
-void pivot(int direction) {
+void pivot(boolean clockwise, double dgrees) {
+  int steps = int(dgrees*pivotDegreesToSteps);
+  stepperLeft.setCurrentPosition(0);
+  stepperRight.setCurrentPosition(0);
+  
+  if(clockwise){
+    stepperLeft.moveTo(steps);
+    setSpeeds(spinSpeed,0);
+  } else {
+    stepperRight.moveTo(steps);
+    setSpeeds(0,spinSpeed);
+  }
+
+  steppers.runSpeedToPosition(); // Blocks until all are in position
 }
 
 /*
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
 */
-void spin(int direction) {
+void spin(boolean clockwise, double dgrees) {
+  int steps = int(dgrees*spinDegreesToSteps);
+  stepperLeft.setCurrentPosition(0);
+  stepperRight.setCurrentPosition(0);
+  
+  if(clockwise){
+    stepperLeft.moveTo(steps);
+    stepperRight.moveTo(-steps);
+    setSpeeds(spinSpeed,-spinSpeed);
+  } else {
+    stepperLeft.moveTo(-steps);
+    stepperRight.moveTo(steps);
+    setSpeeds(-spinSpeed,spinSpeed);
+  }
+
+  steppers.runSpeedToPosition(); // Blocks until all are in position
 }
 
 /*
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
 */
-void turn(int direction) {
+void turn(boolean clockwise,double dgrees,double radius) {
+  stepperRight.setMaxSpeed(500);
+  stepperLeft.setMaxSpeed(500);
+  
+  stepperLeft.setCurrentPosition(0);
+  stepperRight.setCurrentPosition(0);
+  
+  int rightSteps;
+  int leftSteps;
+  setSpeeds(spinSpeed,spinSpeed);
+  if(clockwise){
+    leftSteps = int((dgrees/360.0)*2.0*PI*(radius+wheelDist/2.0));
+    rightSteps = int((dgrees/360.0)*2.0*PI*(radius-wheelDist/2.0));
+  } else {
+    leftSteps = int((dgrees/360.0)*2.0*PI*(radius-wheelDist/2.0));
+    rightSteps = int((dgrees/360.0)*2.0*PI*(radius+wheelDist/2.0));
+  }
+  
+  long arr[] = {rightSteps,leftSteps};
+  steppers.moveTo(arr);
+
+//  
+//  if(clockwise){
+//    stepperLeft.moveTo(steps);
+//    stepperRight.moveTo(-steps);
+//    setSpeeds(spinSpeed,-spinSpeed);
+//  } else {
+//    stepperLeft.moveTo(-steps);
+//    stepperRight.moveTo(steps);
+//    setSpeeds(-spinSpeed,spinSpeed);
+//  }
+
+  steppers.runSpeedToPosition(); // Blocks until all are in position
 }
+
 /*
   forward(double distance)
   This function takes in a distance (in inches) and runs the left and right steppers 
@@ -413,24 +484,44 @@ void forward(double distance) {
   stepperLeft.moveTo(steps);
   stepperRight.moveTo(steps);
   if(distance < 0){
-    stepperLeft.setSpeed(-fwdSpeed);
-    stepperRight.setSpeed(-fwdSpeed);
+    stop();
   } else {
-    stepperLeft.setSpeed(fwdSpeed);
-    stepperRight.setSpeed(fwdSpeed);
+    setSpeeds(fwdSpeed,fwdSpeed);
   }
 
   steppers.runSpeedToPosition(); // Blocks until all are in position
 }
 /*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+  reverse(double distance)
+  This function takes in a distance (in inches) and runs the left and right steppers 
+  at the same constant speed until the robot has traveled the given distance in the
+  reverse direction.
+
+  BLOCKING FUNCTION
 */
 void reverse(int distance) {
+  int steps = int(distance*inchesToSteps);
+  stepperLeft.setCurrentPosition(0);
+  stepperRight.setCurrentPosition(0);
+  stepperLeft.moveTo(steps);
+  stepperRight.moveTo(steps);
+  if(distance < 0){
+    stop();
+  } else {
+    setSpeeds(revSpeed,revSpeed);
+  }
+
+  steppers.runSpeedToPosition(); // Blocks until all are in position
 }
 /*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+  stop()
+
+  This function stops both stepper motors by setting their speeds to 0
+
+  NON-BLOCKING FUNCTION
 */
 void stop() {
+  setSpeeds(0,0);
 }
 
 
@@ -450,6 +541,16 @@ void moveFigure8(int diam) {
 }
 
 
+/* 
+ *  setSpeeds() 
+ *  
+ *  This function sets the speed of the left and right steppers.  This allows for the speed of one motor 
+ *  to be adjusted if one is faster than the other.  
+ */
+void setSpeeds(double left, double right) {
+  stepperLeft.setSpeed(left);
+  stepperRight.setSpeed(right*rightSpeedAdjustment);
+}
 
 /*
  * The readController() function interfaces with the PS2 Controller Reciever to
