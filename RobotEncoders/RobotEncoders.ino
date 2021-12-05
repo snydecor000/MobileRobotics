@@ -76,6 +76,12 @@ volatile long encoder[2] = {0, 0};  //interrupt variable to hold number of encod
 int lastSpeed[2] = {0, 0};          //variable to hold encoder speed (left, right)
 int accumTicks[2] = {0, 0};         //variable to hold accumulated ticks since last reset
 
+#define fwdSpeed 500
+#define readySpeed 100
+#define wheelDiameter 3.375 //diameter of the wheel in inches
+#define ticksPerRev 9.0
+#define distancePerTick wheelDiameter*PI/ticksPerRev
+
 AccelStepper stepperRight(AccelStepper::DRIVER, rtStepPin, rtDirPin);//create instance of right stepper motor object (2 driver pins, low to high transition step pin 52, direction input pin 53 (high means forward)
 AccelStepper stepperLeft(AccelStepper::DRIVER, ltStepPin, ltDirPin);//create instance of left stepper motor object (2 driver pins, step pin 50, direction input pin 51)
 MultiStepper steppers;//create instance to control multiple steppers at the same time
@@ -105,9 +111,11 @@ void setup() {
 
 //the loop funciton runs continuously to move the robot wheels and count encoder ticks
 void loop() {
-  move1(FWD, qua_rot);            //move the robot wheels
-  print_data();                   //prints encoder data
+  //move1(FWD, qua_rot);            //move the robot wheels
+  //print_data();                   //prints encoder data
+  forward(18.0);
   delay(wait_time);               //wait to move robot
+  
 }
 
 //function prints encoder data to serial monitor
@@ -138,6 +146,7 @@ void print_data() {
 void LwheelSpeed()
 {
   encoder[LEFT] ++;  //count the left wheel encoder interrupts
+  accumTicks[LEFT]++;
 }
 
 //interrupt function to count right encoder ticks
@@ -166,6 +175,76 @@ void move1(int dir, int amt) {
 }
 
 /*
+  forward(double distance)
+  This function takes in a distance (in inches) and runs the left and right steppers 
+  at the same constant speed until the robot has traveled the given distance in the
+  forward direction.
+
+  BLOCKING FUNCTION
+*/
+void forward(double distance) {
+  robotReady();
+  
+  int leftEncoderTarget = int(distance/double(distancePerTick));
+
+  if(distance < 0){
+    stepperLeft.setSpeed(-fwdSpeed);
+    stepperRight.setSpeed(-fwdSpeed);
+  } else {
+    stepperLeft.setSpeed(fwdSpeed);
+    stepperRight.setSpeed(fwdSpeed);
+  }
+
+  accumTicks[LEFT] = 0;
+  encoder[LEFT] = 0;
+  
+  while(accumTicks[LEFT] <= leftEncoderTarget) {    
+    //accumTicks[LEFT] = accumTicks[LEFT] + encoder[LEFT]; 
+    stepperLeft.runSpeed(); 
+    stepperRight.runSpeed();
+    encoder[LEFT] = 0;
+   // Serial.println(accumTicks[LEFT]);
+  }
+
+  stopRobot();
+}
+
+/*
+  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+*/
+void stopRobot() {
+  stepperLeft.setSpeed(0);
+  stepperRight.setSpeed(0);
+}
+
+/*
+  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+*/
+void robotReady() {
+  stepperLeft.setSpeed(readySpeed);
+
+  encoder[LEFT] = 0;
+  while(encoder[LEFT] <= 1) {    
+    stepperLeft.runSpeed();
+    stepperRight.setSpeed(0); 
+  }
+  
+  stepperRight.setSpeed(readySpeed);
+  encoder[RIGHT] = 0;
+  while(encoder[RIGHT] <= 1) {    
+    stepperRight.runSpeed();
+    stepperLeft.setSpeed(0);
+  }
+}
+
+/*
+  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+*/
+void pivot(bool clockwise) {
+}
+
+
+/*
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
 */
 void goToAngle(int Angle) {
@@ -180,5 +259,11 @@ void goToGoal(int x, int y) {
 /*
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
 */
-void moveSquare(int side) {
+void moveSquare(double side) {
+  for(int i = 0; i < 4; i++) {
+    forward(side);
+    stopRobot();
+    pivot(true);
+  }
+  stopRobot();
 }
