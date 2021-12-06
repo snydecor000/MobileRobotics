@@ -63,25 +63,27 @@ const int rtStepPin = 50; //right stepper motor step pin (pin 44 for wireless)
 const int rtDirPin = 51;  // right stepper motor direction pin (pin 49 for wireless)
 const int ltStepPin = 52; //left stepper motor step pin (pin 46 for wireless)
 const int ltDirPin = 53;  //left stepper motor direction pin (no change in pin for wireless)
-#define stepperEnable 48  //stepper enable pin on stepStick 
+const int stepperEnable = 48;  //stepper enable pin on stepStick 
 const int stepTime = 500; //delay time between high and low on step pin
 #define stepperEnTrue false //variable for enabling stepper motor
 #define stepperEnFalse true //variable for disabling stepper motor
 
-#define stepsPerRev 800
-#define wheelDiameter 3.375 //diameter of the wheel in inches
-#define wheelDist 8.57      //distance between the center of the wheels in inches
-#define stepsToInches wheelDiameter*PI/stepsPerRev
-#define inchesToSteps stepsPerRev/(wheelDiameter*PI)
-#define rightSpeedAdjustment 1.0
+const double stepsPerRev = 800;
+const double wheelDiameter = 3.375; //diameter of the wheel in inches
+const double wheelDist = 8.57;      //distance between the center of the wheels in inches
+const double stepsToInches = wheelDiameter*PI/stepsPerRev;
+const double inchesToSteps = stepsPerRev/(wheelDiameter*PI);
+const double rightSpeedAdjustment = 1.0;
 
 //Used for spinning (Both wheels going opposite direction)
-#define spinDegreesToSteps 5.65
-#define pivotDegreesToSteps (2*PI*wheelDist*inchesToSteps)/360.0
+const double spinDegreesToSteps = 5.65;
+const double pivotDegreesToSteps = (2*PI*wheelDist*inchesToSteps)/360.0;
 
-#define fwdSpeed 1000
-#define revSpeed -1000
+#define maximumSpeed 1500
+#define fwdSpeed 500
+#define revSpeed 500
 #define spinSpeed 500
+#define turnSpeed 500
 
 AccelStepper stepperRight(AccelStepper::DRIVER, rtStepPin, rtDirPin);//create instance of right stepper motor object (2 driver pins, low to high transition step pin 52, direction input pin 53 (high means forward)
 AccelStepper stepperLeft(AccelStepper::DRIVER, ltStepPin, ltDirPin);//create instance of left stepper motor object (2 driver pins, step pin 50, direction input pin 51)
@@ -126,9 +128,9 @@ void setup()
   digitalWrite(ylwLED, LOW);                    //turn off yellow LED
   digitalWrite(grnLED, LOW);                    //turn off green LED
 
-  stepperRight.setMaxSpeed(1500);//set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
+  stepperRight.setMaxSpeed(maximumSpeed);//set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
   stepperRight.setAcceleration(1000);//set desired acceleration in steps/s^2
-  stepperLeft.setMaxSpeed(1500);//set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
+  stepperLeft.setMaxSpeed(maximumSpeed);//set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
   stepperLeft.setAcceleration(1000);//set desired acceleration in steps/s^2
   steppers.addStepper(stepperRight);//add right motor to MultiStepper
   steppers.addStepper(stepperLeft);//add left motor to MultiStepper
@@ -185,7 +187,7 @@ void setup()
   //Serial.begin(9600); //start serial communication at 9600 baud rate for debugging
 }
 
-unsigned long last_read = 0;
+//unsigned long last_read = 0;
 void loop()
 {
 //  //Every 50 milliseconds, poll the PS2 controller and get the latest teleop commands
@@ -204,8 +206,238 @@ void loop()
 //  move3();//call move back and forth function with MultiStepper library functions
 //  move4(); //move to target position with 2 different speeds
 //  move5(); //move continuously with 2 different speeds
-  turn(true,9000,12);
-  delay(5000);
+//  turn(true,90.0,12.0);
+//  forward(12);
+//  delay(2000);
+//  reverse(12);
+//  delay(2000);
+//  spin(true,90);
+//  delay(2000);
+//  pivot(false,90);
+  moveFigure8(12);
+  delay(2000);
+}
+
+/*
+  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+  pivoting left is clockwise
+  pivoting right is counter-clockwise
+*/
+void pivot(boolean clockwise, double dgrees) {
+  int steps = int(dgrees*pivotDegreesToSteps);
+  stepperLeft.setCurrentPosition(0);
+  stepperRight.setCurrentPosition(0);
+  
+  if(clockwise){
+    stepperLeft.moveTo(steps);
+    setSpeeds(spinSpeed,0);
+  } else {
+    stepperRight.moveTo(steps);
+    setSpeeds(0,spinSpeed);
+  }
+
+  steppers.runSpeedToPosition(); // Blocks until all are in position
+}
+
+/*
+  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+*/
+void spin(boolean clockwise, double dgrees) {
+  int steps = int(dgrees*spinDegreesToSteps);
+  stepperLeft.setCurrentPosition(0);
+  stepperRight.setCurrentPosition(0);
+  
+  if(clockwise){
+    stepperLeft.moveTo(steps);
+    stepperRight.moveTo(-steps);
+    setSpeeds(spinSpeed,-spinSpeed);
+  } else {
+    stepperLeft.moveTo(-steps);
+    stepperRight.moveTo(steps);
+    setSpeeds(-spinSpeed,spinSpeed);
+  }
+
+  steppers.runSpeedToPosition(); // Blocks until all are in position
+}
+
+/*
+  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+  test
+*/
+void turn(boolean clockwise, double dgrees, double radius) {
+  stepperLeft.setCurrentPosition(0);
+  stepperRight.setCurrentPosition(0);
+  
+  int rightSteps;
+  int leftSteps;
+  
+  if(clockwise){
+    leftSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius+wheelDist/2.0)));
+    rightSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius-wheelDist/2.0)));
+  } else {
+    leftSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius-wheelDist/2.0)));
+    rightSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius+wheelDist/2.0)));
+  }
+
+  stepperLeft.moveTo(leftSteps);
+  stepperRight.moveTo(rightSteps);
+
+  //If the right wheel is the outside wheel in the turn
+  if(rightSteps>=leftSteps){
+    int insideWheelSpeed = int((double(turnSpeed)/double(rightSteps))*double(leftSteps));
+    setSpeeds(insideWheelSpeed,turnSpeed);
+  } else {
+    int insideWheelSpeed = int((double(turnSpeed)/double(leftSteps))*double(rightSteps));
+    setSpeeds(turnSpeed,insideWheelSpeed);
+  }  
+
+  steppers.runSpeedToPosition(); // Blocks until all are in position
+}
+
+/*
+  forward(double distance)
+  This function takes in a distance (in inches) and runs the left and right steppers 
+  at the same constant speed until the robot has traveled the given distance in the
+  forward direction.
+
+  BLOCKING FUNCTION
+*/
+void forward(double distance) {
+  int steps = int(distance*inchesToSteps);
+  stepperLeft.setCurrentPosition(0);
+  stepperRight.setCurrentPosition(0);
+  stepperLeft.moveTo(steps);
+  stepperRight.moveTo(steps);
+  if(distance < 0){
+    stop();
+  } else {
+    setSpeeds(fwdSpeed,fwdSpeed);
+  }
+
+  steppers.runSpeedToPosition(); // Blocks until all are in position
+}
+/*
+  reverse(double distance)
+  This function takes in a distance (in inches) and runs the left and right steppers 
+  at the same constant speed until the robot has traveled the given distance in the
+  reverse direction.
+
+  BLOCKING FUNCTION
+*/
+void reverse(int distance) {
+  int steps = int(distance*inchesToSteps);
+  stepperLeft.setCurrentPosition(0);
+  stepperRight.setCurrentPosition(0);
+  stepperLeft.moveTo(-steps);
+  stepperRight.moveTo(-steps);
+  if(distance < 0){
+    stop();
+  } else {
+    setSpeeds(-revSpeed,-revSpeed);
+  }
+
+  steppers.runSpeedToPosition(); // Blocks until all are in position
+}
+/*
+  stop()
+
+  This function stops both stepper motors by setting their speeds to 0
+
+  NON-BLOCKING FUNCTION
+*/
+void stop() {
+  setSpeeds(0,0);
+}
+
+
+
+
+/*
+  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+*/
+void moveCircle(boolean clockwise, double diameter) {
+  turn(clockwise,360.0,diameter/2);
+}
+
+/*
+  The moveFigure8() function takes the diameter in inches as the input. It uses the moveCircle() function
+  twice with 2 different direcitons to create a figure 8 with circles of the given diameter.
+*/
+void moveFigure8(double diameter) {
+  moveCircle(true,diameter);
+  moveCircle(false,diameter);
+}
+
+
+/* 
+ *  setSpeeds() 
+ *  
+ *  This function sets the speed of the left and right steppers.  This allows for the speed of one motor 
+ *  to be adjusted if one is faster than the other.  
+ */
+void setSpeeds(double left, double right) {
+  stepperLeft.setSpeed(left);
+  stepperRight.setSpeed(right*rightSpeedAdjustment);
+}
+
+/*
+ * The readController() function interfaces with the PS2 Controller Reciever to
+ * retrieve the most recent joystick and button values.  From these joystick and button
+ * values, the speed of the left and right stepper motors are then set accordingly
+ * using the AccelStepper library
+ */
+void readController()
+{
+  int xAxis;//x axis value
+  int yAxis;//y axis value
+
+  ps2x.read_gamepad(false, vibrate);//update ps2 controller information
+
+  if (abs(ps2x.Analog(PSS_LY) - 128) >= joystickDeadband)//if the axis is outside of the set deadband
+    yAxis = (ps2x.Analog(PSS_LY) - 128) * -1;//y axis is reversed so reverse it and make it so the center is 0
+  else
+    yAxis = 0;
+
+  if (abs(ps2x.Analog(PSS_RX) - 128) >= joystickDeadband)//if the axis is outside of the set deadband
+    xAxis = (ps2x.Analog(PSS_RX) - 128);//make it so the center is 0
+  else
+    xAxis = 0;
+
+  if (ps2x.Button(PSB_R2)) //Boost Button(Right Trigger)
+  {
+    xAxis = map(xAxis, 0, 128, 0, 110);//map axis values to drive percentage from 0 to 110%
+    yAxis = map(yAxis, 0, 128, 0, 110);
+  }
+  else//regular diving
+  {
+    xAxis = map(xAxis, 0, 128, 0, 50);//map axis values to drive percentages from 0 to 50%
+    yAxis = map(yAxis, 0, 128, 0, 50);
+  }
+
+  //convert mapped x and y axis values into left and right speed values
+  //using an arcade configuration ("driving" controlled by y axis, "turning" controlled by x axis)
+  int leftSpeed = (yAxis + xAxis)*10;
+  int rightSpeed = (yAxis - xAxis)*10;
+
+  //if robot is commanded to move forward or turn right
+  if (yAxis > 0 || xAxis > 0){
+    //drive robot forward according to speed values
+    stepperRight.setSpeed(rightSpeed);//set right motor speed
+    stepperLeft.setSpeed(leftSpeed);//set left motor speed
+  } else if (yAxis < 0 || xAxis < 0){ //robot is commanded to move backwards or turn left
+    //drive robot in reverse according to speed values
+    stepperRight.setSpeed(rightSpeed);//set right motor speed
+    stepperLeft.setSpeed(leftSpeed);//set left motor speed
+  } else{
+    stepperRight.setSpeed(0);//stop the left and right wheels
+    stepperLeft.setSpeed(0);
+  }
+
+
+//  if (ps2x.Button(PSB_L1)) //Left Bumper
+//    closeGripper();
+//  else if (ps2x.Button(PSB_R1)) //Right Bumper
+//    openGripper();
 }
 
 /*
@@ -387,227 +619,4 @@ void runAtSpeedToPosition() {
 void runAtSpeed ( void ) {
   while (stepperRight.runSpeed() || stepperLeft.runSpeed()) {
   }
-}
-
-/*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
-  pivoting left is clockwise
-  pivoting right is counter-clockwise
-*/
-void pivot(boolean clockwise, double dgrees) {
-  int steps = int(dgrees*pivotDegreesToSteps);
-  stepperLeft.setCurrentPosition(0);
-  stepperRight.setCurrentPosition(0);
-  
-  if(clockwise){
-    stepperLeft.moveTo(steps);
-    setSpeeds(spinSpeed,0);
-  } else {
-    stepperRight.moveTo(steps);
-    setSpeeds(0,spinSpeed);
-  }
-
-  steppers.runSpeedToPosition(); // Blocks until all are in position
-}
-
-/*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
-*/
-void spin(boolean clockwise, double dgrees) {
-  int steps = int(dgrees*spinDegreesToSteps);
-  stepperLeft.setCurrentPosition(0);
-  stepperRight.setCurrentPosition(0);
-  
-  if(clockwise){
-    stepperLeft.moveTo(steps);
-    stepperRight.moveTo(-steps);
-    setSpeeds(spinSpeed,-spinSpeed);
-  } else {
-    stepperLeft.moveTo(-steps);
-    stepperRight.moveTo(steps);
-    setSpeeds(-spinSpeed,spinSpeed);
-  }
-
-  steppers.runSpeedToPosition(); // Blocks until all are in position
-}
-
-/*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
-*/
-void turn(boolean clockwise,double dgrees,double radius) {
-  stepperRight.setMaxSpeed(500);
-  stepperLeft.setMaxSpeed(500);
-  
-  stepperLeft.setCurrentPosition(0);
-  stepperRight.setCurrentPosition(0);
-  
-  int rightSteps;
-  int leftSteps;
-  setSpeeds(spinSpeed,spinSpeed);
-  if(clockwise){
-    leftSteps = int((dgrees/360.0)*2.0*PI*(radius+wheelDist/2.0));
-    rightSteps = int((dgrees/360.0)*2.0*PI*(radius-wheelDist/2.0));
-  } else {
-    leftSteps = int((dgrees/360.0)*2.0*PI*(radius-wheelDist/2.0));
-    rightSteps = int((dgrees/360.0)*2.0*PI*(radius+wheelDist/2.0));
-  }
-  
-  long arr[] = {rightSteps,leftSteps};
-  steppers.moveTo(arr);
-
-//  
-//  if(clockwise){
-//    stepperLeft.moveTo(steps);
-//    stepperRight.moveTo(-steps);
-//    setSpeeds(spinSpeed,-spinSpeed);
-//  } else {
-//    stepperLeft.moveTo(-steps);
-//    stepperRight.moveTo(steps);
-//    setSpeeds(-spinSpeed,spinSpeed);
-//  }
-
-  steppers.runSpeedToPosition(); // Blocks until all are in position
-}
-
-/*
-  forward(double distance)
-  This function takes in a distance (in inches) and runs the left and right steppers 
-  at the same constant speed until the robot has traveled the given distance in the
-  forward direction.
-
-  BLOCKING FUNCTION
-*/
-void forward(double distance) {
-  int steps = int(distance*inchesToSteps);
-  stepperLeft.setCurrentPosition(0);
-  stepperRight.setCurrentPosition(0);
-  stepperLeft.moveTo(steps);
-  stepperRight.moveTo(steps);
-  if(distance < 0){
-    stop();
-  } else {
-    setSpeeds(fwdSpeed,fwdSpeed);
-  }
-
-  steppers.runSpeedToPosition(); // Blocks until all are in position
-}
-/*
-  reverse(double distance)
-  This function takes in a distance (in inches) and runs the left and right steppers 
-  at the same constant speed until the robot has traveled the given distance in the
-  reverse direction.
-
-  BLOCKING FUNCTION
-*/
-void reverse(int distance) {
-  int steps = int(distance*inchesToSteps);
-  stepperLeft.setCurrentPosition(0);
-  stepperRight.setCurrentPosition(0);
-  stepperLeft.moveTo(steps);
-  stepperRight.moveTo(steps);
-  if(distance < 0){
-    stop();
-  } else {
-    setSpeeds(revSpeed,revSpeed);
-  }
-
-  steppers.runSpeedToPosition(); // Blocks until all are in position
-}
-/*
-  stop()
-
-  This function stops both stepper motors by setting their speeds to 0
-
-  NON-BLOCKING FUNCTION
-*/
-void stop() {
-  setSpeeds(0,0);
-}
-
-
-
-
-/*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
-*/
-void moveCircle(int diam, int dir) {
-}
-
-/*
-  The moveFigure8() function takes the diameter in inches as the input. It uses the moveCircle() function
-  twice with 2 different direcitons to create a figure 8 with circles of the given diameter.
-*/
-void moveFigure8(int diam) {
-}
-
-
-/* 
- *  setSpeeds() 
- *  
- *  This function sets the speed of the left and right steppers.  This allows for the speed of one motor 
- *  to be adjusted if one is faster than the other.  
- */
-void setSpeeds(double left, double right) {
-  stepperLeft.setSpeed(left);
-  stepperRight.setSpeed(right*rightSpeedAdjustment);
-}
-
-/*
- * The readController() function interfaces with the PS2 Controller Reciever to
- * retrieve the most recent joystick and button values.  From these joystick and button
- * values, the speed of the left and right stepper motors are then set accordingly
- * using the AccelStepper library
- */
-void readController()
-{
-  int xAxis;//x axis value
-  int yAxis;//y axis value
-
-  ps2x.read_gamepad(false, vibrate);//update ps2 controller information
-
-  if (abs(ps2x.Analog(PSS_LY) - 128) >= joystickDeadband)//if the axis is outside of the set deadband
-    yAxis = (ps2x.Analog(PSS_LY) - 128) * -1;//y axis is reversed so reverse it and make it so the center is 0
-  else
-    yAxis = 0;
-
-  if (abs(ps2x.Analog(PSS_RX) - 128) >= joystickDeadband)//if the axis is outside of the set deadband
-    xAxis = (ps2x.Analog(PSS_RX) - 128);//make it so the center is 0
-  else
-    xAxis = 0;
-
-  if (ps2x.Button(PSB_R2)) //Boost Button(Right Trigger)
-  {
-    xAxis = map(xAxis, 0, 128, 0, 110);//map axis values to drive percentage from 0 to 110%
-    yAxis = map(yAxis, 0, 128, 0, 110);
-  }
-  else//regular diving
-  {
-    xAxis = map(xAxis, 0, 128, 0, 50);//map axis values to drive percentages from 0 to 50%
-    yAxis = map(yAxis, 0, 128, 0, 50);
-  }
-
-  //convert mapped x and y axis values into left and right speed values
-  //using an arcade configuration ("driving" controlled by y axis, "turning" controlled by x axis)
-  int leftSpeed = (yAxis + xAxis)*10;
-  int rightSpeed = (yAxis - xAxis)*10;
-
-  //if robot is commanded to move forward or turn right
-  if (yAxis > 0 || xAxis > 0){
-    //drive robot forward according to speed values
-    stepperRight.setSpeed(rightSpeed);//set right motor speed
-    stepperLeft.setSpeed(leftSpeed);//set left motor speed
-  } else if (yAxis < 0 || xAxis < 0){ //robot is commanded to move backwards or turn left
-    //drive robot in reverse according to speed values
-    stepperRight.setSpeed(rightSpeed);//set right motor speed
-    stepperLeft.setSpeed(leftSpeed);//set left motor speed
-  } else{
-    stepperRight.setSpeed(0);//stop the left and right wheels
-    stepperLeft.setSpeed(0);
-  }
-
-
-//  if (ps2x.Button(PSB_L1)) //Left Bumper
-//    closeGripper();
-//  else if (ps2x.Button(PSB_R1)) //Right Bumper
-//    openGripper();
 }
