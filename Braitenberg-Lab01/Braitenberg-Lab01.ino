@@ -63,6 +63,8 @@ const int rtStepPin = 50; //right stepper motor step pin (pin 44 for wireless)
 const int rtDirPin = 51;  // right stepper motor direction pin (pin 49 for wireless)
 const int ltStepPin = 52; //left stepper motor step pin (pin 46 for wireless)
 const int ltDirPin = 53;  //left stepper motor direction pin (no change in pin for wireless)
+const int ltEncoder = 2;  //left encoder pin
+const int rtEncoder = 3;  //right encoder pin
 const int stepperEnable = 48;  //stepper enable pin on stepStick 
 const int stepTime = 500; //delay time between high and low on step pin
 #define stepperEnTrue false //variable for enabling stepper motor
@@ -70,10 +72,12 @@ const int stepTime = 500; //delay time between high and low on step pin
 
 const double stepsPerRev = 800;
 const double wheelDiameter = 3.375; //diameter of the wheel in inches
-const double wheelDist = 8.57;      //distance between the center of the wheels in inches
+const double wheelDist = 8.85;      //distance between the center of the wheels in inches 8.54
 const double stepsToInches = wheelDiameter*PI/stepsPerRev;
 const double inchesToSteps = stepsPerRev/(wheelDiameter*PI);
-const double rightSpeedAdjustment = 1.0;
+const double ticksPerRev = 20.0;    // number of ticks encoder sees per revolution
+const double distancePerTick = wheelDiameter*PI/ticksPerRev; // the distance moved for each tick of the encoder
+const double rightSpeedAdjustment = 0.99;
 
 //Used for spinning (Both wheels going opposite direction)
 const double spinDegreesToSteps = 5.65;
@@ -83,7 +87,14 @@ const double pivotDegreesToSteps = (2*PI*wheelDist*inchesToSteps)/360.0;
 #define fwdSpeed 500
 #define revSpeed 500
 #define spinSpeed 500
-#define turnSpeed 500
+#define turnSpeed 1000
+#define readySpeed 100            // speed for slightly adjusting wheels to calibrate encoders
+
+#define LEFT  0                   //constant for left wheel
+#define RIGHT 1                   //constant for right wheel
+volatile long encoder[2] = {0, 0};  //interrupt variable to hold number of encoder counts (left, right)
+int lastSpeed[2] = {0, 0};          //variable to hold encoder speed (left, right)
+int accumTicks[2] = {0, 0};         //variable to hold accumulated ticks since last reset
 
 AccelStepper stepperRight(AccelStepper::DRIVER, rtStepPin, rtDirPin);//create instance of right stepper motor object (2 driver pins, low to high transition step pin 52, direction input pin 53 (high means forward)
 AccelStepper stepperLeft(AccelStepper::DRIVER, ltStepPin, ltDirPin);//create instance of left stepper motor object (2 driver pins, step pin 50, direction input pin 51)
@@ -105,7 +116,22 @@ byte vibrate;
 #define grnLED 6        //green LED for displaying states
 #define ylwLED 7        //yellow LED for displaying states
 
-#define pauseTime 2500 //time before robot moves
+#define pauseTime 5000 //time before robot moves
+#define wait_time 1000 //time to wait between prints and starting robot
+
+//interrupt function to count left encoder tickes
+void LwheelSpeed()
+{
+  encoder[LEFT] ++;  //count the left wheel encoder interrupts
+  accumTicks[LEFT]++; // count accumulated ticks for left wheel
+}
+
+//interrupt function to count right encoder ticks
+void RwheelSpeed()
+{
+  encoder[RIGHT] ++; //count the right wheel encoder interrupts
+  accumTicks[RIGHT]++; // count accumulated ticks for left wheel
+}
 
 void setup()
 {
@@ -127,6 +153,9 @@ void setup()
   digitalWrite(redLED, LOW);                    //turn off red LED
   digitalWrite(ylwLED, LOW);                    //turn off yellow LED
   digitalWrite(grnLED, LOW);                    //turn off green LED
+
+  attachInterrupt(digitalPinToInterrupt(ltEncoder), LwheelSpeed, CHANGE); //init the interrupt mode for the digital pin 2
+  attachInterrupt(digitalPinToInterrupt(rtEncoder), RwheelSpeed, CHANGE); //init the interrupt mode for the digital pin 3
 
   stepperRight.setMaxSpeed(maximumSpeed);//set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
   stepperRight.setAcceleration(1000);//set desired acceleration in steps/s^2
@@ -187,7 +216,7 @@ void setup()
   //Serial.begin(9600); //start serial communication at 9600 baud rate for debugging
 }
 
-//unsigned long last_read = 0;
+unsigned long last_read = 0;
 void loop()
 {
 //  //Every 50 milliseconds, poll the PS2 controller and get the latest teleop commands
@@ -199,6 +228,43 @@ void loop()
 //  //Run the stepper motors at the speed they were set to in the readController() function
 //  stepperRight.runSpeed();
 //  stepperLeft.runSpeed();
+
+//  forward(18.0);
+//  delay(3*wait_time);
+//  reverse(18.0);
+//  delay(3*wait_time);
+//  turn(true,90.0,12.0);
+//  delay(3*wait_time);
+//  pivot(true,90.0);
+//  delay(3*wait_time);
+//  spin(true,45.0);
+//  delay(3*wait_time);
+//  stopRobot();
+//  moveCircle(true,36.0);
+//  delay(3*wait_time);
+  moveFigure8(36.0);
+  delay(3*wait_time);
+//  calibrate(true,true,true);
+//  delay(5*wait_time);
+//  goToAngle(-60.0);
+//  delay(3*wait_time);
+//  calibrate(true,true,true);
+//  delay(5*wait_time);
+//  goToAngle(135.0);
+//  delay(3*wait_time);
+//  calibrate(true,true,true);
+//  delay(5*wait_time);
+//  goToGoal(0,48.0);
+//  delay(3*wait_time);
+//  calibrate(true,true,true);
+//  delay(5*wait_time);
+//  goToGoal(-24.0,36.0);
+//  delay(3*wait_time);
+//  calibrate(true,true,true);
+//  delay(5*wait_time);
+//  moveSquare(48.0);
+  
+  
 
   //uncomment each function one at a time to see what the code does
 //  move1();//call move back and forth function
@@ -214,8 +280,44 @@ void loop()
 //  spin(true,90);
 //  delay(2000);
 //  pivot(false,90);
-  moveFigure8(12);
-  delay(2000);
+//  moveFigure8(12);
+//  delay(2000);
+}
+
+/*
+  calibrate()
+
+  This function increments each stepper until one encoder tick has been seen.
+  This helps calibrate the encoders before using them for movement
+
+  BLOCKING FUNCTION
+*/
+void calibrate(bool moveLeft, bool moveRight, bool clockwise) {
+  if(moveLeft){
+    // Calibrate left encoder
+    if(clockwise){
+      setSpeeds(readySpeed, 0);
+    } else{
+      setSpeeds(-readySpeed, 0);
+    }
+    encoder[LEFT] = 0;
+    while(encoder[LEFT] <= 1) {    
+      stepperLeft.runSpeed();
+    }
+  }
+
+  if(moveRight){
+    // Calibrate right encoder
+    if(clockwise){
+      setSpeeds(0, readySpeed);
+    } else{
+      setSpeeds(0, -readySpeed);
+    }
+    encoder[RIGHT] = 0;
+    while(encoder[RIGHT] <= 1) {    
+      stepperRight.runSpeed();
+    }
+  }
 }
 
 /*
@@ -243,7 +345,7 @@ void pivot(boolean clockwise, double dgrees) {
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
 */
 void spin(boolean clockwise, double dgrees) {
-  int steps = int(dgrees*spinDegreesToSteps);
+  int steps = int(abs(dgrees)*spinDegreesToSteps);
   stepperLeft.setCurrentPosition(0);
   stepperRight.setCurrentPosition(0);
   
@@ -309,13 +411,42 @@ void forward(double distance) {
   stepperLeft.moveTo(steps);
   stepperRight.moveTo(steps);
   if(distance < 0){
-    stop();
+    stopRobot();
   } else {
     setSpeeds(fwdSpeed,fwdSpeed);
   }
 
   steppers.runSpeedToPosition(); // Blocks until all are in position
 }
+
+/*
+ * Forward but with encoders
+ */
+void forwardEnc(double distance) {
+  
+  int leftEncoderTarget = int(distance/double(distancePerTick));    // caculate the target value based on the desired distance
+
+  // set speeds to move forward if distance is positive
+  if(distance < 0){
+    stopRobot();
+  } else {
+    setSpeeds(fwdSpeed, fwdSpeed);
+  }
+
+  // clear accumulated ticks and left encoder ticks
+  accumTicks[LEFT] = 0;
+  encoder[LEFT] = 0;
+
+  // move steppers if desired distance has not been reached according to encoder data
+  while(accumTicks[LEFT] <= leftEncoderTarget) {    
+    stepperLeft.runSpeed(); 
+    stepperRight.runSpeed();
+    encoder[LEFT] = 0;
+  }
+
+  stopRobot();
+}
+
 /*
   reverse(double distance)
   This function takes in a distance (in inches) and runs the left and right steppers 
@@ -331,7 +462,7 @@ void reverse(int distance) {
   stepperLeft.moveTo(-steps);
   stepperRight.moveTo(-steps);
   if(distance < 0){
-    stop();
+    stopRobot();
   } else {
     setSpeeds(-revSpeed,-revSpeed);
   }
@@ -345,7 +476,7 @@ void reverse(int distance) {
 
   NON-BLOCKING FUNCTION
 */
-void stop() {
+void stopRobot() {
   setSpeeds(0,0);
 }
 
@@ -356,7 +487,9 @@ void stop() {
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
 */
 void moveCircle(boolean clockwise, double diameter) {
+  digitalWrite(redLED, HIGH);
   turn(clockwise,360.0,diameter/2);
+  digitalWrite(redLED, LOW);
 }
 
 /*
@@ -364,8 +497,89 @@ void moveCircle(boolean clockwise, double diameter) {
   twice with 2 different direcitons to create a figure 8 with circles of the given diameter.
 */
 void moveFigure8(double diameter) {
+  digitalWrite(redLED, HIGH);
+  digitalWrite(ylwLED, HIGH);
   moveCircle(true,diameter);
+  delay(1000);
   moveCircle(false,diameter);
+  digitalWrite(redLED, LOW);
+  digitalWrite(ylwLED, LOW);
+}
+
+
+/*
+  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+*/
+void goToAngle(double angle) {
+  digitalWrite(grnLED, HIGH);
+  encoder[RIGHT] = 0;
+  encoder[LEFT] = 0;
+
+  accumTicks[RIGHT] = 0;
+  accumTicks[LEFT] = 0;
+
+  double angleTicksGoal = (abs(angle)/360.0)*(PI*double(wheelDist)/double(distancePerTick));
+
+  if(angle < 0){
+    spin(false, angle);
+  } else{
+    spin(true, angle);
+  }
+
+  if(accumTicks[LEFT] > angleTicksGoal + 1) {
+    calibrate(true, false, false);
+  } else if(accumTicks[LEFT] < angleTicksGoal - 1) {
+    calibrate(true, false, true);
+  } 
+  
+  if(accumTicks[RIGHT] > angleTicksGoal + 1) {
+    calibrate(false, true, false);
+  } else if(accumTicks[RIGHT] < angleTicksGoal - 1) {
+    calibrate(false, true, true);
+  }
+  digitalWrite(grnLED, LOW);
+}
+
+/*
+  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+*/
+void goToGoal(int x, int y) {
+  digitalWrite(ylwLED, HIGH);
+  digitalWrite(grnLED, HIGH);
+  y = -y;
+  double rads = atan2(y,x);
+  double dgrees = rads*(180.0/3.14159265);
+  double dist = sqrt(y*y+x*x);
+  
+  goToAngle(dgrees);
+  delay(wait_time);
+  forwardEnc(dist);
+  digitalWrite(ylwLED, LOW);
+  digitalWrite(grnLED, LOW);
+}
+
+/*
+  moveSquare()
+
+  This function moves the robot in a square shape by calling the forward function
+  and the pivot function 4 times. The forward function utilizes encoders to track
+  the distance traveled by the robot
+
+  BLOCKING FUNCTION
+*/
+void moveSquare(double side) {
+  digitalWrite(redLED, HIGH);
+  digitalWrite(grnLED, HIGH);
+  digitalWrite(ylwLED, HIGH);
+  for(int i = 0; i < 4; i++) {
+    forwardEnc(side);
+    stopRobot();
+    pivot(true, 90);
+  }
+  stopRobot();
+  digitalWrite(redLED, LOW);
+  digitalWrite(grnLED, LOW);
+  digitalWrite(ylwLED, LOW);
 }
 
 
@@ -422,17 +636,40 @@ void readController()
   //if robot is commanded to move forward or turn right
   if (yAxis > 0 || xAxis > 0){
     //drive robot forward according to speed values
-    stepperRight.setSpeed(rightSpeed);//set right motor speed
-    stepperLeft.setSpeed(leftSpeed);//set left motor speed
+    setSpeeds(leftSpeed,rightSpeed);//set the motor speeds
   } else if (yAxis < 0 || xAxis < 0){ //robot is commanded to move backwards or turn left
     //drive robot in reverse according to speed values
-    stepperRight.setSpeed(rightSpeed);//set right motor speed
-    stepperLeft.setSpeed(leftSpeed);//set left motor speed
+    setSpeeds(leftSpeed,rightSpeed);//set the motor speeds
   } else{
-    stepperRight.setSpeed(0);//stop the left and right wheels
-    stepperLeft.setSpeed(0);
+    stopRobot();
   }
 
+  if(ps2x.Button(PSB_TRIANGLE)){
+    stopRobot();
+    goToAngle(60.0);
+    stopRobot();
+  }
+  if(ps2x.Button(PSB_CROSS)){
+    stopRobot();
+    goToGoal(20.0,20.0);
+    stopRobot();
+  }
+  if(ps2x.Button(PSB_CIRCLE)){
+    stopRobot();
+    moveCircle(true,12.0);
+    stopRobot();
+  }
+  if(ps2x.Button(PSB_SQUARE)){
+    stopRobot();
+    square(12.0);
+    stopRobot();
+  }
+  if(ps2x.Button(PSB_R3)){
+    stopRobot();
+    moveFigure8(12.0);
+    stopRobot();
+  }
+  
 
 //  if (ps2x.Button(PSB_L1)) //Left Bumper
 //    closeGripper();
