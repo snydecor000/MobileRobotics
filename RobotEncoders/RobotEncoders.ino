@@ -92,7 +92,6 @@ int accumTicks[2] = {0, 0};         //variable to hold accumulated ticks since l
 #define spinSpeed 200
 #define rightSpeedAdjustment 1.03
 
-const double degreesToTime = 3075.0/90.0;
 const double spinDegreesToSteps = 5.65;
 
 AccelStepper stepperRight(AccelStepper::DRIVER, rtStepPin, rtDirPin);//create instance of right stepper motor object (2 driver pins, low to high transition step pin 52, direction input pin 53 (high means forward)
@@ -249,12 +248,12 @@ void stopRobot() {
 }
 
 /*
-  robotReady()
+  calibrate()
 
   This function increments each stepper until one encoder tick has been seen.
   This helps calibrate the encoders before using them for movement
 
-  NON-BLOCKING FUNCTION
+  BLOCKING FUNCTION
 */
 void calibrate(bool moveLeft, bool moveRight, bool clockwise) {
   if(moveLeft){
@@ -389,7 +388,7 @@ void goToGoal(int x, int y) {
   and the pivot function 4 times. The forward function utilizes encoders to track
   the distance traveled by the robot
 
-  NON-BLOCKING FUNCTION
+  BLOCKING FUNCTION
 */
 void moveSquare(double side) {
   for(int i = 0; i < 4; i++) {
