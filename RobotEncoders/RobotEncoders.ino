@@ -76,21 +76,21 @@ volatile long encoder[2] = {0, 0};  //interrupt variable to hold number of encod
 int lastSpeed[2] = {0, 0};          //variable to hold encoder speed (left, right)
 int accumTicks[2] = {0, 0};         //variable to hold accumulated ticks since last reset
 
-#define fwdSpeed 500              // speed for forward movement
+#define fwdSpeed 200              // speed for forward movement
 #define readySpeed 100            // speed for slightly adjusting wheels to calibrate encoders
 #define wheelDiameter 3.375       // diameter of the wheel in inches
 #define ticksPerRev 20.0          // number of ticks encoder sees per revolution
 #define distancePerTick wheelDiameter*PI/ticksPerRev    // the distance moved for each tick of the encoder
 
 #define stepsPerRev 800
-#define wheelDist 8.54      //distance between the center of the wheels in inches
+#define wheelDist 8.575      //distance between the center of the wheels in inches // 8.54
 #define stepsToInches wheelDiameter*PI/stepsPerRev
 #define inchesToSteps stepsPerRev/(wheelDiameter*PI)
 
 #define pivotDegreesToSteps (2*PI*wheelDist*inchesToSteps)/360.0
 
-#define spinSpeed 500
-#define rightSpeedAdjustment 0.99
+#define spinSpeed 200
+#define rightSpeedAdjustment 1.03
 
 const double spinDegreesToSteps = 5.65;
 
@@ -130,12 +130,18 @@ void loop() {
 
   calibrate(true, true, true);
   stopRobot();
-  delay(wait_time);
-  goToGoal(-10, -12);
-  //goToAngle(90.0);
-  //moveSquare(18.0);
-  //forward(18.0);                  // calls forward function to move robot forward
-  delay(wait_time);               //wait to move robot
+  delay(5000);
+  //goToAngle(-60.0);
+  //delay(5000);
+  //goToAngle(135.0);
+  //delay(5000);
+ //goToGoal(0, 48.0);
+  //delay(5000);
+ goToGoal(-24.0, 36.0);
+ // delay(5000);
+  //moveSquare(48.0);
+  stopRobot();
+  delay(5000);               //wait to move robot
   
 }
 
@@ -319,13 +325,13 @@ void spin(boolean clockwise, double dgrees) {
   stepperRight.setCurrentPosition(0);
   
   if(clockwise){
-    stepperLeft.moveTo(steps);
-    stepperRight.moveTo(-steps);
-    setSpeeds(spinSpeed,-spinSpeed);
-  } else {
     stepperLeft.moveTo(-steps);
     stepperRight.moveTo(steps);
     setSpeeds(-spinSpeed,spinSpeed);
+  } else {
+    stepperLeft.moveTo(steps);
+    stepperRight.moveTo(-steps);
+    setSpeeds(spinSpeed,-spinSpeed);
   }
 
   steppers.runSpeedToPosition(); // Blocks until all are in position
@@ -366,7 +372,6 @@ void goToAngle(double angle) {
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
 */
 void goToGoal(int x, int y) {
-  y = -y;
   double rads = atan2(y,x);
   double dgrees = rads*(180.0/3.14159265);
   double dist = sqrt(y*y+x*x);
@@ -389,7 +394,10 @@ void moveSquare(double side) {
   for(int i = 0; i < 4; i++) {
     forward(side);
     stopRobot();
+    delay(500);
     pivot(true, 90);
+    stopRobot();
+    delay(500);
   }
   stopRobot();
 }
