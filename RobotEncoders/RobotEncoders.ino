@@ -128,16 +128,20 @@ void loop() {
   //move1(FWD, qua_rot);            //move the robot wheels
   //print_data();                   //prints encoder data
 
-  calibrate(true, true, true);
+//  calibrate(true, true, true);
   stopRobot();
   delay(5000);
+
+  goToAngle(90.0);
+  delay(10000);
+
   //goToAngle(-60.0);
   //delay(5000);
   //goToAngle(135.0);
   //delay(5000);
  //goToGoal(0, 48.0);
   //delay(5000);
- goToGoal(-24.0, 36.0);
+ //goToGoal(-24.0, 36.0);
  // delay(5000);
   //moveSquare(48.0);
   stopRobot();
@@ -354,7 +358,7 @@ void goToAngle(double angle) {
   } else{
     spin(true, angle);
   }
-
+/*
   if(accumTicks[LEFT] > angleTicksGoal + 1) {
     calibrate(true, false, false);
   } else if(accumTicks[LEFT] < angleTicksGoal - 1) {
@@ -366,6 +370,7 @@ void goToAngle(double angle) {
   } else if(accumTicks[RIGHT] < angleTicksGoal - 1) {
     calibrate(false, true, true);
   }
+  */
 }
 
 /*
