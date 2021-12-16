@@ -66,7 +66,7 @@
 #define DEBUG
 #endif
 
-#if 1
+#if 0
 #define PS2
 #endif
 
@@ -155,7 +155,7 @@ const int maxSonarDistCM = 31;
 #define grnLED 6        //green LED for displaying states
 #define ylwLED 7        //yellow LED for displaying states
 
-#define pauseTime 5000 //time before robot moves
+#define pauseTime 1000 //time before robot moves
 #define wait_time 1000 //time to wait between prints and starting robot
 
 //interrupt function to count left encoder tickes
@@ -285,14 +285,21 @@ void loop()
 //feelForce();
 //  delay(1000);
 //  randomWander();
-runAway();
-while(true){}
+if(detectedObstacle()){
+  runAway();
+}
+
+//while(true){}
+//  runAway();
+//  stepperLeft.runSpeed();
+//  stepperRight.runSpeed();
 }
 
 double randLSpeed = 0.0;
 double randRSpeed = 0.0;
 long lastRandom = 0;
 void randomWander() {
+  digitalWrite(grnLED,HIGH);
   if(millis() - lastRandom > 1000){
       randLSpeed = random(800);
       randRSpeed = random(800);
@@ -302,6 +309,7 @@ void randomWander() {
   setSpeeds(randLSpeed,randRSpeed);
   stepperRight.runSpeed();
   stepperLeft.runSpeed();
+  digitalWrite(grnLED,LOW);
 }
 
 void feelForce() {
@@ -317,31 +325,33 @@ void feelForce() {
   // The left IR feels forces that push in the negative y direction
   // The right IR feels forces that push in the positive y direction
   yForce += -1*(12.0 - leftDist) + (12.0 - rightDist);
-//  Serial.println("---------------------------------------------------------------------------");
-//  Serial.print("YForce: ");Serial.print(yForce);Serial.print("   XForce: ");Serial.println(xForce);
+  Serial.println("---------------------------------------------------------------------------");
+  Serial.print("Front: ");Serial.print(frontDist);Serial.print("   Right: ");Serial.print(rightDist);
+  Serial.print("Back: ");Serial.print(backDist);Serial.print("   Left: ");Serial.println(leftDist);
+  Serial.print("YForce: ");Serial.print(yForce);Serial.print("   XForce: ");Serial.println(xForce);
   int leftSpeed = 0;
   int rightSpeed = 0;
   
-if(leftDist < 4.0 && rightDist < 4.0 && abs(xForce) < 1.0 && abs(yForce) < 1.0){
-//  xForce += 2.0;
-  leftSpeed = (xForce + yForce)*avoidSpeed;
-  rightSpeed = (xForce - yForce)*avoidSpeed;
-} else if(frontDist < 4.0 && backDist < 4.0 && abs(xForce) < 1.0 && abs(yForce) < 1.0){
-//  yForce += 2.0;
-  leftSpeed = (xForce + yForce)*avoidSpeed;
-  rightSpeed = (xForce - yForce)*avoidSpeed; 
-} else if(false){
-  
-} else {
-    leftSpeed = (xForce + yForce)*avoidSpeed;
-    rightSpeed = (xForce - yForce)*avoidSpeed; 
-}
-  
-  setSpeeds(leftSpeed,rightSpeed);
-
-  
-  stepperRight.runSpeed();
-  stepperLeft.runSpeed();
+//if(leftDist < 4.0 && rightDist < 4.0 && abs(xForce) < 1.0 && abs(yForce) < 1.0){
+////  xForce += 2.0;
+//  leftSpeed = (xForce + yForce)*avoidSpeed;
+//  rightSpeed = (xForce - yForce)*avoidSpeed;
+//} else if(frontDist < 4.0 && backDist < 4.0 && abs(xForce) < 1.0 && abs(yForce) < 1.0){
+////  yForce += 2.0;
+//  leftSpeed = (xForce + yForce)*avoidSpeed;
+//  rightSpeed = (xForce - yForce)*avoidSpeed; 
+//} else if(false){
+//  
+//} else {
+//    leftSpeed = (xForce + yForce)*avoidSpeed;
+//    rightSpeed = (xForce - yForce)*avoidSpeed; 
+//}
+//  
+//  setSpeeds(leftSpeed,rightSpeed);
+//
+//  
+//  stepperRight.runSpeed();
+//  stepperLeft.runSpeed();
 
 //  boolean frontLimited = frontDist <= 4.0;
 //  boolean backLimited = backDist <= 4.0;
@@ -403,46 +413,149 @@ void runAway(){
   
   double magnitude = sqrt(xForce*xForce+yForce*yForce);
   double angle = atan2(yForce,xForce)*180.0/PI;
-  double radius = 20.0-magnitude;
-  boolean turnDir = CLOCKWISE;
+  if(xForce < 0.0) setSpeeds(-300,-300);
+  else setSpeeds(300,300);
 
-  Serial.print("Angle: ");Serial.println(angle);
+
   if(frontDist <= 4.0 && backDist <= 4.0 && leftDist <= 4.0 && rightDist <= 4.0){
-    //Do Nothing
+    //DO NOTHIGN
+    setSpeeds(0.0,0.0);
   } else if(frontDist <= 4.0 && backDist <= 4.0){
-    spin(CLOCKWISE,90.0);
-    forward(12);
-  } else if(angle>0&&angle<90){
-    turnDir = COUNTERCLOCKWISE;
-    angle = angle;
-    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
-    turn(turnDir, angle, radius);
-  } else if(angle>=90&&angle<180){
-    turnDir = COUNTERCLOCKWISE;
-    angle = -1*(180.0-angle);
-    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
-    turn(turnDir, angle, radius);
-    reverse(magnitude);
-    spin(CLOCKWISE,180.0);
-  } else if(angle<0&&angle>-90){
-    turnDir = CLOCKWISE;
-    angle = -1*angle;
-    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
-    turn(turnDir, angle, radius);
-  } else if(angle<=-90&&angle>-180) {
-    turnDir = CLOCKWISE;
-    angle = -1*(180.0+angle);
-    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
-    turn(turnDir, angle, radius);
-    reverse(magnitude);
-    spin(CLOCKWISE,180.0);
-  } else if(angle==180.0 || angle==-180.0){
-    reverse(magnitude);
-    spin(CLOCKWISE,180.0);
-  } else if(angle == 0.0){
-    forward(magnitude);
+    if(yForce>0.0){
+      spin(CLOCKWISE,90.0);
+      if(yForce < 0.0) setSpeeds(300,300);
+      else setSpeeds(-300,-300);
+    } else{
+      spin(COUNTERCLOCKWISE,90.0);
+      if(yForce < 0.0) setSpeeds(-300,-300);
+      else setSpeeds(300,300);
+    }
   }
+  
+  while(detectedObstacle()){
+    stepperLeft.runSpeed();
+    stepperRight.runSpeed();
+  }
+  long timer = millis();
+  while(millis()-timer<4000){
+    stepperLeft.runSpeed();
+    stepperRight.runSpeed();
+  }
+
+  spin(CLOCKWISE,angle);
 }
+
+//void runAway(){
+//  double frontDist = getLinearizedDistance(FRONT_IR);
+//  double backDist = getLinearizedDistance(BACK_IR);
+//  double rightDist = getLinearizedDistance(RIGHT_IR);
+//  double leftDist = getLinearizedDistance(LEFT_IR);
+//  double xForce = 0.0;
+//  double yForce = 0.0;
+//  // The front IR feels forces that push in the negative x direction
+//  // The back IR feels forces that push in the positive x direction
+//  xForce += -1*(12.0 - frontDist) + (12.0 - backDist);
+//  // The left IR feels forces that push in the negative y direction
+//  // The right IR feels forces that push in the positive y direction
+//  yForce += -1*(12.0 - leftDist) + (12.0 - rightDist);
+//  
+//  double magnitude = sqrt(xForce*xForce+yForce*yForce);
+//  double angle = atan2(yForce,xForce)*180.0/PI;
+//
+//  double leftSpeed = (xForce + yForce)*avoidSpeed;
+//  double rightSpeed = (xForce - yForce)*avoidSpeed; 
+//  setSpeeds(leftSpeed,rightSpeed);
+//  long timer = millis();
+//  while(millis()-timer < 100){
+//    stepperLeft.runSpeed();
+//    stepperRight.runSpeed();
+//  }
+//}
+
+//
+//void runAway(){
+//  double frontDist = getLinearizedDistance(FRONT_IR);
+//  double backDist = getLinearizedDistance(BACK_IR);
+//  double rightDist = getLinearizedDistance(RIGHT_IR);
+//  double leftDist = getLinearizedDistance(LEFT_IR);
+//  double xForce = 0.0;
+//  double yForce = 0.0;
+//  // The front IR feels forces that push in the negative x direction
+//  // The back IR feels forces that push in the positive x direction
+//  xForce += -1*(12.0 - frontDist) + (12.0 - backDist);
+//  // The left IR feels forces that push in the negative y direction
+//  // The right IR feels forces that push in the positive y direction
+//  yForce += -1*(12.0 - leftDist) + (12.0 - rightDist);
+//  
+//  double magnitude = sqrt(xForce*xForce+yForce*yForce);
+//  double angle = atan2(yForce,xForce)*180.0/PI;
+//  double radius = 20.0-magnitude;
+//  boolean turnDir = CLOCKWISE;
+//
+//  Serial.print("Angle: ");Serial.println(angle);
+//  if(frontDist <= 4.0 && backDist <= 4.0 && leftDist <= 4.0 && rightDist <= 4.0){
+////    setSpeeds(0.0,0.0);
+//  } else if(frontDist <= 4.0 && backDist <= 4.0){
+////    spin(CLOCKWISE,90.0);
+////    forward(12);
+////    setSpeeds(0.0,0.0);
+//
+//  } else if(angle>0&&angle<90){
+//    turnDir = COUNTERCLOCKWISE;
+//    angle = angle;
+//    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
+//    turnSpeed2(turnDir, angle, radius);
+////    forward(magnitude);
+//  } else if(angle>=90&&angle<180){
+//    turnDir = COUNTERCLOCKWISE;
+//    angle = -1*(180.0-angle);
+//    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
+//    turnSpeed2(turnDir, angle, radius);
+////    reverse(magnitude);
+////    spin(CLOCKWISE,180.0);
+//  } else if(angle<0&&angle>-90){
+//    turnDir = CLOCKWISE;
+//    angle = -1*angle;
+//    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
+//    turnSpeed2(turnDir, angle, radius);
+////    forward(magnitude);
+//  } else if(angle<=-90&&angle>-180) {
+//    turnDir = CLOCKWISE;
+//    angle = -1*(180.0+angle);
+//    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
+//    turnSpeed2(turnDir, angle, radius);
+////    reverse(magnitude);
+////    spin(CLOCKWISE,180.0);
+//  }
+////  } else if(angle==180.0 || angle==-180.0){
+//////    reverse(magnitude);
+//////    spin(CLOCKWISE,180.0);
+////  } else if(angle == 0.0){
+//////    forward(magnitude);
+////  } else if(angle == 90){
+////    if(leftDist <= 4.0 && rightDist <= 4.0){
+//////      forward(magnitude*2);
+////    } else {
+//////          forward(magnitude);
+//////    spin(COUNTERCLOCKWISE,90);
+//////    forward(magnitude);
+////    }
+////
+////  } else if(angle == -90.0) {
+////    if(leftDist <= 4.0 && rightDist <= 4.0){
+//////      forward(magnitude*2);
+////    } else {
+//////          forward(magnitude);
+//////    spin(CLOCKWISE,90);
+//////    forward(magnitude);
+////    }
+//
+//   else {
+////    setSpeeds(0,0);
+//  }
+//
+//
+//}
 
 /*
  * getLinearizedDistance(sensorPin)
@@ -456,7 +569,7 @@ double getLinearizedDistance(int sensor){
       }
       value = irData.getMedian();
       if(value <= 9){return 0;}
-      else if(value > 28){return 12.0;}
+      else if(value > 14){return 12.0;}//28
       else {return value*0.475 - 1.00;}
       break;
     case LEFT_IR:
@@ -465,7 +578,7 @@ double getLinearizedDistance(int sensor){
       }
       value = irData.getMedian();
       if(value <= 5){return 0;}
-      else if(value > 30){return 12.0;}
+      else if(value > 18){return 12.0;}//30
       else {return value*0.398+0.158;}
       break;
     case FRONT_IR:
@@ -474,7 +587,7 @@ double getLinearizedDistance(int sensor){
       }
       value = irData.getMedian();
       if(value <= 10){return 0;}
-      else if(value > 25){return 12.0;}//60
+      else if(value > 20){return 12.0;}//60//25
       else {return value*0.187 + 0.184;}
       break;
     case BACK_IR:
@@ -629,6 +742,36 @@ void turn(boolean clockwise, double dgrees, double radius) {
   }
 
   runSpeedToActualPosition(); // Blocks until all are in position
+}
+
+void turnSpeed2(boolean clockwise, double dgrees, double radius) {
+  stepperLeft.setCurrentPosition(0);
+  stepperRight.setCurrentPosition(0);
+  
+  int rightSteps;
+  int leftSteps;
+  
+  if(clockwise){
+    leftSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius+spinWheelDist/2.0)));
+    rightSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius-spinWheelDist/2.0)));
+  } else {
+    leftSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius-spinWheelDist/2.0)));
+    rightSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius+spinWheelDist/2.0)));
+  }
+
+//  stepperLeft.moveTo(leftSteps);
+//  stepperRight.moveTo(rightSteps);
+
+  //If the right wheel is the outside wheel in the turn
+  if(abs(rightSteps)>=abs(leftSteps)){
+    int insideWheelSpeed = int((double(turnSpeed)/double(abs(rightSteps)))*double(abs(leftSteps)));
+    setSpeeds(sgn(leftSteps)*insideWheelSpeed,sgn(rightSteps)*turnSpeed);
+  } else {
+    int insideWheelSpeed = int((double(turnSpeed)/double(abs(leftSteps)))*double(abs(rightSteps)));
+    setSpeeds(sgn(leftSteps)*turnSpeed,sgn(rightSteps)*insideWheelSpeed);
+  }
+
+//  runSpeedToActualPosition(); // Blocks until all are in position
 }
 
 /*
