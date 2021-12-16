@@ -102,10 +102,11 @@ const double rightSpeedAdjustment = 1;
 #define turnSpeed 400
 #define readySpeed 100            // speed for slightly adjusting wheels to calibrate encoders
 #define collideSpeed 500
+#define avoidSpeed 80
 #define CLOCKWISE true
 #define COUNTERCLOCKWISE false
 
-#define COLLIDE_DIST 5
+#define COLLIDE_DIST 5.0
 
 #define LEFT  0                     //constant for left wheel
 #define RIGHT 1                     //constant for right wheel
@@ -146,6 +147,7 @@ SharpIR frontIR(SharpIR::GP2Y0A21YK0F,FRONT_IR);
 NewPing leftSonar(LEFT_SONAR, LEFT_SONAR);
 NewPing rightSonar(RIGHT_SONAR, RIGHT_SONAR);
 RunningMedian sensorData(5);
+RunningMedian irData(5);
 const int maxSonarDistCM = 31;
 
 #define enableLED 13    //stepper enabled LED
@@ -273,11 +275,79 @@ void loop()
 //  stepperRight.runSpeed();
 //  stepperLeft.runSpeed();
 
-
-Serial.println(getLinearizedDistance(FRONT_IR));
-delay(500);
-//  collide();
+//      for (int i = 0; i < 4; i++) {
+//        irData.add(frontIR.getDistance());
+//      }
+//      Serial.println(irData.getMedian());
+//Serial.println(getLinearizedDistance(FRONT_IR));
+//delay(500);
+//  collide(FRONT_IR);
+feelForce();
 //  delay(1000);
+
+}
+
+void feelForce() {
+  double frontDist = getLinearizedDistance(FRONT_IR);
+  double backDist = getLinearizedDistance(BACK_IR);
+  double rightDist = getLinearizedDistance(RIGHT_IR);
+  double leftDist = getLinearizedDistance(LEFT_IR);
+  double xForce = 0.0;
+  double yForce = 0.0;
+  // The front IR feels forces that push in the negative x direction
+  // The back IR feels forces that push in the positive x direction
+  xForce += -1*(12.0 - frontDist) + (12.0 - backDist);
+  // The left IR feels forces that push in the negative y direction
+  // The right IR feels forces that push in the positive y direction
+  yForce += -1*(12.0 - leftDist) + (12.0 - rightDist);
+//  Serial.println("---------------------------------------------------------------------------");
+//  Serial.print("YForce: ");Serial.print(yForce);Serial.print("   XForce: ");Serial.println(xForce);
+  int leftSpeed = 0;
+  int rightSpeed = 0;
+  
+if(leftDist < 4.0 && rightDist < 4.0 && abs(xForce) < 1.0 && abs(yForce) < 1.0){
+  xForce += 2.0;
+  leftSpeed = (xForce + yForce)*avoidSpeed;
+  rightSpeed = (xForce - yForce)*avoidSpeed;
+} else if(frontDist < 4.0 && backDist < 4.0 && abs(xForce) < 1.0 && abs(yForce) < 1.0){
+  yForce += 2.0;
+  leftSpeed = (xForce + yForce)*avoidSpeed;
+  rightSpeed = (xForce - yForce)*avoidSpeed; 
+} else if(false){
+  
+} else {
+    leftSpeed = (xForce + yForce)*avoidSpeed;
+    rightSpeed = (xForce - yForce)*avoidSpeed; 
+}
+  
+  setSpeeds(leftSpeed,rightSpeed);
+
+  
+  stepperRight.runSpeed();
+  stepperLeft.runSpeed();
+
+//  boolean frontLimited = frontDist <= 4.0;
+//  boolean backLimited = backDist <= 4.0;
+//  boolean rightLimited = rightDist <= 4.0;
+//  boolean leftLimited = leftDist <= 4.0;
+
+//  double magnitude = 0.0;
+//  double angle = 0.0;
+//
+//  angle = atan2(yForce,xForce);
+//  magnitude = sqrt(xForce*xForce+yForce*yForce);
+  
+//  if(frontLimited&&backLimited&&rightLimited&&leftLimited){
+//    setSpeeds(0,0);
+//  } else if(!frontLimited&&!backLimited&&!rightLimited&&leftLimited ||
+//            frontLimited&&backLimited&&!rightLimited&&leftLimited ||
+//            frontLimited&&!backLimited&&!rightLimited&&leftLimited) {//L or FLB or FL
+//    setSpeeds(-100,0.0);
+//  } else {
+//    setSpeeds(100,100);
+//  }
+  
+//  Serial.print("Mag: ");Serial.print(magnitude);Serial.print("   Angle: ");Serial.println(angle);
 }
 
 void collide(int sensor){
@@ -298,34 +368,40 @@ double getLinearizedDistance(int sensor){
   double value = 0;
   switch(sensor){
     case RIGHT_IR:
-      for (int i = 0; i < 99 ; i++) {
-        value = value + rightIR.getDistance();
+      for (int i = 0; i < 4; i++) {
+        irData.add(rightIR.getDistance());
       }
-      value /= 100.0;
+      value = irData.getMedian();
       if(value <= 9){return 0;}
       else if(value > 28){return 12.0;}
-      else {return value*2.14 + 1.79;}
+      else {return value*0.475 - 1.00;}
       break;
     case LEFT_IR:
-      for (int i = 0; i < 99 ; i++) {
-        value = value + leftIR.getDistance();
+      for (int i = 0; i < 4 ; i++) {
+        irData.add(leftIR.getDistance());
       }
-      value /= 100.0;
-      if(value <= 9){return 0;}
+      value = irData.getMedian();
+      if(value <= 5){return 0;}
       else if(value > 30){return 12.0;}
-      else {return value*2.51 -0.366;}
+      else {return value*0.398+0.158;}
       break;
     case FRONT_IR:
       for (int i = 0; i < 4; i++) {
-        sensorData.add(frontIR.getDistance());
+        irData.add(frontIR.getDistance());
       }
-      value = sensorData.getMedian();
+      value = irData.getMedian();
       if(value <= 10){return 0;}
-      else if(value > 65){return 12.0;}
+      else if(value > 25){return 12.0;}//60
       else {return value*0.187 + 0.184;}
       break;
     case BACK_IR:
-    
+      for (int i = 0; i < 4; i++) {
+        irData.add(backIR.getDistance());
+      }
+      value = irData.getMedian();
+      if(value <= 9){return 0;}
+      else if(value > 30){return 12.0;}//72
+      else {return value*0.139 + 1.11;}
       break;
     case LEFT_SONAR:
       for (int i = 0; i < 4; i++) {
