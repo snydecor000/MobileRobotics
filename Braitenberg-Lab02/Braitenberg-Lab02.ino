@@ -282,9 +282,26 @@ void loop()
 //Serial.println(getLinearizedDistance(FRONT_IR));
 //delay(500);
 //  collide(FRONT_IR);
-feelForce();
+//feelForce();
 //  delay(1000);
+//  randomWander();
+runAway();
+while(true){}
+}
 
+double randLSpeed = 0.0;
+double randRSpeed = 0.0;
+long lastRandom = 0;
+void randomWander() {
+  if(millis() - lastRandom > 1000){
+      randLSpeed = random(800);
+      randRSpeed = random(800);
+      
+      lastRandom = millis();
+  }
+  setSpeeds(randLSpeed,randRSpeed);
+  stepperRight.runSpeed();
+  stepperLeft.runSpeed();
 }
 
 void feelForce() {
@@ -306,11 +323,11 @@ void feelForce() {
   int rightSpeed = 0;
   
 if(leftDist < 4.0 && rightDist < 4.0 && abs(xForce) < 1.0 && abs(yForce) < 1.0){
-  xForce += 2.0;
+//  xForce += 2.0;
   leftSpeed = (xForce + yForce)*avoidSpeed;
   rightSpeed = (xForce - yForce)*avoidSpeed;
 } else if(frontDist < 4.0 && backDist < 4.0 && abs(xForce) < 1.0 && abs(yForce) < 1.0){
-  yForce += 2.0;
+//  yForce += 2.0;
   leftSpeed = (xForce + yForce)*avoidSpeed;
   rightSpeed = (xForce - yForce)*avoidSpeed; 
 } else if(false){
@@ -359,6 +376,72 @@ void collide(int sensor){
   }
   stopRobot();
   digitalWrite(redLED, LOW);
+}
+
+boolean detectedObstacle(){
+  double frontDist = getLinearizedDistance(FRONT_IR);
+  double backDist = getLinearizedDistance(BACK_IR);
+  double rightDist = getLinearizedDistance(RIGHT_IR);
+  double leftDist = getLinearizedDistance(LEFT_IR);
+
+  return frontDist <= COLLIDE_DIST || backDist <= COLLIDE_DIST || leftDist <= COLLIDE_DIST || rightDist <= COLLIDE_DIST;
+}
+
+void runAway(){
+  double frontDist = getLinearizedDistance(FRONT_IR);
+  double backDist = getLinearizedDistance(BACK_IR);
+  double rightDist = getLinearizedDistance(RIGHT_IR);
+  double leftDist = getLinearizedDistance(LEFT_IR);
+  double xForce = 0.0;
+  double yForce = 0.0;
+  // The front IR feels forces that push in the negative x direction
+  // The back IR feels forces that push in the positive x direction
+  xForce += -1*(12.0 - frontDist) + (12.0 - backDist);
+  // The left IR feels forces that push in the negative y direction
+  // The right IR feels forces that push in the positive y direction
+  yForce += -1*(12.0 - leftDist) + (12.0 - rightDist);
+  
+  double magnitude = sqrt(xForce*xForce+yForce*yForce);
+  double angle = atan2(yForce,xForce)*180.0/PI;
+  double radius = 20.0-magnitude;
+  boolean turnDir = CLOCKWISE;
+
+  Serial.print("Angle: ");Serial.println(angle);
+  if(frontDist <= 4.0 && backDist <= 4.0 && leftDist <= 4.0 && rightDist <= 4.0){
+    //Do Nothing
+  } else if(frontDist <= 4.0 && backDist <= 4.0){
+    spin(CLOCKWISE,90.0);
+    forward(12);
+  } else if(angle>0&&angle<90){
+    turnDir = COUNTERCLOCKWISE;
+    angle = angle;
+    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
+    turn(turnDir, angle, radius);
+  } else if(angle>=90&&angle<180){
+    turnDir = COUNTERCLOCKWISE;
+    angle = -1*(180.0-angle);
+    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
+    turn(turnDir, angle, radius);
+    reverse(magnitude);
+    spin(CLOCKWISE,180.0);
+  } else if(angle<0&&angle>-90){
+    turnDir = CLOCKWISE;
+    angle = -1*angle;
+    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
+    turn(turnDir, angle, radius);
+  } else if(angle<=-90&&angle>-180) {
+    turnDir = CLOCKWISE;
+    angle = -1*(180.0+angle);
+    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
+    turn(turnDir, angle, radius);
+    reverse(magnitude);
+    spin(CLOCKWISE,180.0);
+  } else if(angle==180.0 || angle==-180.0){
+    reverse(magnitude);
+    spin(CLOCKWISE,180.0);
+  } else if(angle == 0.0){
+    forward(magnitude);
+  }
 }
 
 /*
@@ -537,12 +620,12 @@ void turn(boolean clockwise, double dgrees, double radius) {
   stepperRight.moveTo(rightSteps);
 
   //If the right wheel is the outside wheel in the turn
-  if(rightSteps>=leftSteps){
-    int insideWheelSpeed = int((double(turnSpeed)/double(rightSteps))*double(leftSteps));
-    setSpeeds(insideWheelSpeed,turnSpeed);
+  if(abs(rightSteps)>=abs(leftSteps)){
+    int insideWheelSpeed = int((double(turnSpeed)/double(abs(rightSteps)))*double(abs(leftSteps)));
+    setSpeeds(sgn(leftSteps)*insideWheelSpeed,sgn(rightSteps)*turnSpeed);
   } else {
-    int insideWheelSpeed = int((double(turnSpeed)/double(leftSteps))*double(rightSteps));
-    setSpeeds(turnSpeed,insideWheelSpeed);
+    int insideWheelSpeed = int((double(turnSpeed)/double(abs(leftSteps)))*double(abs(rightSteps)));
+    setSpeeds(sgn(leftSteps)*turnSpeed,sgn(rightSteps)*insideWheelSpeed);
   }
 
   runSpeedToActualPosition(); // Blocks until all are in position
