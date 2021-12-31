@@ -137,10 +137,10 @@ byte vibrate;
 #define RIGHT_IR A12
 #define FRONT_IR A13
 #define BACK_IR A15
-SharpIR leftIR(SharpIR::GP2Y0A21YK0F,LEFT_IR);
-SharpIR rightIR(SharpIR::GP2Y0A21YK0F,RIGHT_IR);
-SharpIR backIR(SharpIR::GP2Y0A21YK0F,BACK_IR);
-SharpIR frontIR(SharpIR::GP2Y0A21YK0F,FRONT_IR);
+//SharpIR leftIR(SharpIR::GP2Y0A21YK0F,LEFT_IR);
+//SharpIR rightIR(SharpIR::GP2Y0A21YK0F,RIGHT_IR);
+//SharpIR backIR(SharpIR::GP2Y0A21YK0F,BACK_IR);
+//SharpIR frontIR(SharpIR::GP2Y0A21YK0F,FRONT_IR);
 
 // These functions are our custom rational fitted curves to convert the IR sensor's analog values to inches
 static inline double frontIRToInch(double analog) {return (-0.9298*analog + 1358.0)/(analog+28.26);}
@@ -153,7 +153,7 @@ static inline double backIRToInch(double analog) {return (-0.6391*analog + 1144.
 NewPing leftSonar(LEFT_SONAR, LEFT_SONAR);
 NewPing rightSonar(RIGHT_SONAR, RIGHT_SONAR);
 RunningMedian sensorData(5);
-RunningMedian irData(20);
+RunningMedian irData(15);
 const int maxSonarDistCM = 31;
 
 #define enableLED 13    //stepper enabled LED
@@ -271,16 +271,6 @@ void setup()
 unsigned long last_read = 0;
 void loop()
 {
-  long start = micros();
-  int result = 0;
-  for(int x = 0;x<5;x++) 
-    irData.add(rightIR.getDistance());
-//    irData.add(analogRead(FRONT_IR));
-//  double inches = frontIRToInch(irData.getMedian());
-  long endd = micros();
-  Serial.println(endd-start);
-  Serial.println(irData.getMedian());
-  delay(1000);
 //  //Every 50 milliseconds, poll the PS2 controller and get the latest teleop commands
 //  int temp = millis() - last_read;
 //  if(temp > 50){
@@ -580,40 +570,36 @@ double getLinearizedDistance(int sensor){
   double value = 0;
   switch(sensor){
     case RIGHT_IR:
-      for (int i = 0; i < 4; i++) {
-        irData.add(rightIR.getDistance());
+      for (int i = 0; i < 14; i++) {
+        irData.add(analogRead(RIGHT_IR);
       }
-      value = irData.getMedian();
-      if(value <= 9){return 0;}
-      else if(value > 14){return 12.0;}//28
-      else {return value*0.475 - 1.00;}
+      value = rightIRToInches(irData.getMedian());
+      value = min(value,12.0);
+      value = max(value,2.0);
       break;
     case LEFT_IR:
-      for (int i = 0; i < 4 ; i++) {
-        irData.add(leftIR.getDistance());
+      for (int i = 0; i < 14; i++) {
+        irData.add(analogRead(LEFT_IR);
       }
-      value = irData.getMedian();
-      if(value <= 5){return 0;}
-      else if(value > 18){return 12.0;}//30
-      else {return value*0.398+0.158;}
+      value = leftIRToInches(irData.getMedian());
+      value = min(value,12.0);
+      value = max(value,2.0);
       break;
     case FRONT_IR:
-      for (int i = 0; i < 4; i++) {
-        irData.add(frontIR.getDistance());
+      for (int i = 0; i < 14; i++) {
+        irData.add(analogRead(FRONT_IR);
       }
-      value = irData.getMedian();
-      if(value <= 10){return 0;}
-      else if(value > 20){return 12.0;}//60//25
-      else {return value*0.187 + 0.184;}
+      value = frontIRToInches(irData.getMedian());
+      value = min(value,12.0);
+      value = max(value,2.0);
       break;
     case BACK_IR:
-      for (int i = 0; i < 4; i++) {
-        irData.add(backIR.getDistance());
+      for (int i = 0; i < 14; i++) {
+        irData.add(analogRead(BACK_IR);
       }
-      value = irData.getMedian();
-      if(value <= 9){return 0;}
-      else if(value > 30){return 12.0;}//72
-      else {return value*0.139 + 1.11;}
+      value = leftIRToInches(irData.getMedian());
+      value = min(value,12.0);
+      value = max(value,2.0);
       break;
     case LEFT_SONAR:
       for (int i = 0; i < 4; i++) {
