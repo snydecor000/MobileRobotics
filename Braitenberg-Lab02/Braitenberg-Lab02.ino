@@ -142,12 +142,18 @@ SharpIR rightIR(SharpIR::GP2Y0A21YK0F,RIGHT_IR);
 SharpIR backIR(SharpIR::GP2Y0A21YK0F,BACK_IR);
 SharpIR frontIR(SharpIR::GP2Y0A21YK0F,FRONT_IR);
 
+// These functions are our custom rational fitted curves to convert the IR sensor's analog values to inches
+static inline double frontIRToInch(double analog) {return (-0.9298*analog + 1358.0)/(analog+28.26);}
+static inline double rightIRToInch(double analog) {return (-0.3141*analog + 1865.0)/(analog-48.02);}
+static inline double leftIRToInch(double analog) {return (-0.7801*analog + 2136.0)/(analog-20.15);}
+static inline double backIRToInch(double analog) {return (-0.6391*analog + 1144.0)/(analog+14.04);}
+
 #define LEFT_SONAR A10
 #define RIGHT_SONAR A11
 NewPing leftSonar(LEFT_SONAR, LEFT_SONAR);
 NewPing rightSonar(RIGHT_SONAR, RIGHT_SONAR);
 RunningMedian sensorData(5);
-RunningMedian irData(5);
+RunningMedian irData(20);
 const int maxSonarDistCM = 31;
 
 #define enableLED 13    //stepper enabled LED
@@ -265,6 +271,16 @@ void setup()
 unsigned long last_read = 0;
 void loop()
 {
+  long start = micros();
+  int result = 0;
+  for(int x = 0;x<5;x++) 
+    irData.add(rightIR.getDistance());
+//    irData.add(analogRead(FRONT_IR));
+//  double inches = frontIRToInch(irData.getMedian());
+  long endd = micros();
+  Serial.println(endd-start);
+  Serial.println(irData.getMedian());
+  delay(1000);
 //  //Every 50 milliseconds, poll the PS2 controller and get the latest teleop commands
 //  int temp = millis() - last_read;
 //  if(temp > 50){
@@ -285,9 +301,9 @@ void loop()
 //feelForce();
 //  delay(1000);
 //  randomWander();
-if(detectedObstacle()){
-  runAway();
-}
+//if(detectedObstacle()){
+//  runAway();
+//}
 
 //while(true){}
 //  runAway();
