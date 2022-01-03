@@ -143,18 +143,17 @@ byte vibrate;
 //SharpIR frontIR(SharpIR::GP2Y0A21YK0F,FRONT_IR);
 
 // These functions are our custom rational fitted curves to convert the IR sensor's analog values to inches
-static inline double frontIRToInch(double analog) {return (-0.9298*analog + 1358.0)/(analog+28.26);}
-static inline double rightIRToInch(double analog) {return (-0.3141*analog + 1865.0)/(analog-48.02);}
-static inline double leftIRToInch(double analog) {return (-0.7801*analog + 2136.0)/(analog-20.15);}
-static inline double backIRToInch(double analog) {return (-0.6391*analog + 1144.0)/(analog+14.04);}
+static inline double frontIRToInches(double analog) {return (-0.9298*analog + 1358.0)/(analog+28.26);}
+static inline double rightIRToInches(double analog) {return (-0.3141*analog + 1865.0)/(analog-48.02);}
+static inline double leftIRToInches(double analog) {return (-0.7801*analog + 2136.0)/(analog-20.15);}
+static inline double backIRToInches(double analog) {return (-0.6391*analog + 1144.0)/(analog+14.04);}
 
 #define LEFT_SONAR A10
 #define RIGHT_SONAR A11
 NewPing leftSonar(LEFT_SONAR, LEFT_SONAR);
 NewPing rightSonar(RIGHT_SONAR, RIGHT_SONAR);
-RunningMedian sensorData(5);
-RunningMedian irData(15);
-const int maxSonarDistCM = 31;
+RunningMedian sonarData(5);
+RunningMedian irData(40);
 
 #define enableLED 13    //stepper enabled LED
 #define redLED 5        //red LED for displaying states
@@ -204,6 +203,12 @@ void setup()
   pinMode(BACK_IR, INPUT);                      //sets pin as input
   pinMode(FRONT_IR, INPUT);                     //sets pin as input
 
+//  pinMode(LEFT_SONAR, INPUT);                   //sets pin as input
+//  pinMode(RIGHT_SONAR,INPUT);                   //sets pin as input
+
+//  attachInterrupt(digitalPinToInterrupt(LEFT_SONAR), leftSonarInt, CHANGE);
+//  attachInterrupt(digitalPinToInterrupt(RIGHT_SONAR), rightSonarInt, CHANGE);
+  
   attachInterrupt(digitalPinToInterrupt(L_ENC_PIN), LwheelSpeed, CHANGE); //init the interrupt mode for the digital pin 2  
   attachInterrupt(digitalPinToInterrupt(R_ENC_PIN), RwheelSpeed, CHANGE); //init the interrupt mode for the digital pin 3
 
@@ -268,18 +273,33 @@ void setup()
   Serial.begin(9600); //start serial communication at 9600 baud rate for debugging
 }
 
+
+
 unsigned long last_read = 0;
+double robotHeading = 0.0;
+double goalX = 0.0;
+double goalY = -48.0;
+
+// Global force variable.  Gets updated by the feelForce() function every 100 ms
+double force[2];
 void loop()
 {
-//  //Every 50 milliseconds, poll the PS2 controller and get the latest teleop commands
-//  int temp = millis() - last_read;
-//  if(temp > 50){
+  
+  //Every 100 milliseconds, poll the IR sensors 
+  int temp = millis() - last_read;
+  if(temp > 100){
 //    readController();
-//    last_read = millis();
-//  }
-//  //Run the stepper motors at the speed they were set to in the readController() function
-//  stepperRight.runSpeed();
-//  stepperLeft.runSpeed();
+    
+    feelForce();
+    last_read = millis();
+  }
+
+//  smartWanderStateMachine();
+  goToGoalObAvoid(goalX,goalY);
+
+  //Run the stepper motors at the speed they were set to in the readController() function
+  stepperRight.runSpeed();
+  stepperLeft.runSpeed();
 
 //      for (int i = 0; i < 4; i++) {
 //        irData.add(frontIR.getDistance());
@@ -301,9 +321,239 @@ void loop()
 //  stepperRight.runSpeed();
 }
 
+//void initiateSonarReads(){
+//  noInterrupts();
+//
+//  // Start the left sonar
+//  pinMode(LEFT_SONAR,OUTPUT);
+//  digitalWrite(LEFT_SONAR,HIGH);
+//  delayMicroseconds(20);
+//  digitalWrite(LEFT_SONAR,LOW);
+//
+//  // Start the right sonar
+//  pinMode(RIGHT_SONAR,OUTPUT);
+//  digitalWrite(RIGHT_SONAR,HIGH);
+//  delayMicroseconds(20);
+//  digitalWrite(RIGHT_SONAR,LOW);
+//  
+//  interrupts();
+//}
+
+
+#define RANDOM 0
+#define AVOID 1
+#define COLLIDE 2
+#define RUNAWAY 3
+int SWstate = 0;
+
+void smartWanderStateMachine(){
+  double angle = force[0];
+  double magnitude = force[1];
+
+  switch(SWstate){
+    case RANDOM:
+        digitalWrite(grnLED,HIGH);
+      randomWander();
+//        setSpeeds(200,200);
+      if(magnitude>=11.0){
+        SWstate = COLLIDE;
+        digitalWrite(grnLED,LOW);
+      } else if(magnitude>=5.0){
+        SWstate = AVOID;
+        digitalWrite(grnLED,LOW);
+      }
+      break;
+    case AVOID:
+    digitalWrite(ylwLED,HIGH);
+      if(abs(angle)>=2.8){
+        SWstate = RUNAWAY;
+        digitalWrite(ylwLED,LOW);
+      } else if(abs(angle)<=0.3){
+        SWstate = RANDOM;
+        digitalWrite(ylwLED,LOW);
+      } else if(angle < 0){
+        setSpeeds(300,-300);
+      } else {
+        setSpeeds(-300,300);
+      }
+      
+      if(magnitude < 5.0){
+        SWstate = RANDOM;
+        digitalWrite(ylwLED,LOW);
+      }
+          
+    break;
+    case COLLIDE:
+      digitalWrite(redLED,HIGH);
+      setSpeeds(0,0);
+      if(magnitude<11.0){
+        SWstate = RANDOM;
+        digitalWrite(redLED,LOW);
+      }
+      break;
+    case RUNAWAY:
+      reverse(6.0);
+      spin(CLOCKWISE,180.0);
+      SWstate = RANDOM;
+      break;
+    default:
+      SWstate = RANDOM;
+      break;
+  }
+}
+
+
+int state = 0;
+#define SETUP 0
+#define COLLIDE 1
+#define FOLLOW_RIGHT_WALL 2
+#define FOLLOW_RIGHT_WALL2 3
+#define RETURNMIDLINE_RIGHT 4
+#define FOLLOW_LEFT_WALL 5
+#define FOLLOW_LEFT_WALL2 6
+#define RETURNMIDLINE_LEFT 7
+#define FINISHDIST 8
+#define STOP 9
+
+double rads;
+double dgrees;
+double dist;
+
+double forwardCollideDist;
+double followWallDist;
+double followWall2Dist;
+
+void goToGoalObAvoid(double x,double y){
+  digitalWrite(ylwLED, HIGH);
+  digitalWrite(grnLED, HIGH);
+  digitalWrite(redLED, HIGH);
+  switch(state){
+    case SETUP:
+      forwardCollideDist = 0.0;
+      stepperLeft.setCurrentPosition(0);
+      followWallDist = 0.0;
+      followWall2Dist = 0.0;
+
+      y = -y;
+      rads = atan2(y,x);
+      dist = sqrt(y*y+x*x);
+      dgrees = rads*(180.0/3.14159265);
+      goToAngle(dgrees);
+      delay(wait_time);
+      state = COLLIDE;
+    case COLLIDE:
+      setSpeeds(200,200);
+      
+    
+      if(getLinearizedDistance(FRONT_IR) < 4.0){
+        //record how far we've gone
+        forwardCollideDist = stepperLeft.currentPosition();
+        //ping the sonars
+        double leftSonarDist = getLinearizedDist(LEFT_SONAR);
+        double rightSonarDist = getLinearizedDist(RIGHT_SONAR);
+
+        //decide which side to go to
+        //turn left or right as a result
+        if(rightSonarDist>leftSonarDist){
+          spin(CLOCKWISE,90.0);
+          state = FOLLOW_LEFT_WALL;
+          stepperLeft.setCurrentPosition(0);
+        } else {
+          spin(COUNTERCLOCKWISE,90.0);
+          state = FOLLOW_RIGHT_WALL;
+          stepperLeft.setCurrentPosition(0);
+        }
+      }
+      break;
+    case FOLLOW_RIGHT_WALL:
+      //follow this wall until the right IR is clear of the wall
+      //record the distance traveled
+      setSpeeds(200,200);
+      if(getLinearizedDistance(RIGHT_IR)>10.0){
+        forward(3.0);
+        state = FOLLOW_RIGHT_WALL2;
+        followWallDist = stepperLeft.currentPosition();
+        spin(CLOCKWISE,90.0);
+        stepperLeft.setCurrentPosition(0);
+        forward(11.0);
+      }
+      break;
+    case FOLLOW_RIGHT_WALL2:
+      //follow this wall until the right IR is clear of the wall
+      //record the distance traveled
+      setSpeeds(200,200);
+      if(getLinearizedDistance(RIGHT_IR)>10.0){
+        forward(6.0);
+        state = RETURNMIDLINE_RIGHT;
+        followWall2Dist = stepperLeft.currentPosition();
+        spin(CLOCKWISE,90.0);
+        stepperLeft.setCurrentPosition(0);
+      }
+      break;
+    case RETURNMIDLINE_RIGHT:
+      //use the distance that was traveled earlier to travel back to the correct path
+      forward(followWallDist*stepsToInches);
+      spin(COUNTERCLOCKWISE,90.0);
+      state = FINISHDIST;
+      break;
+    case FOLLOW_LEFT_WALL:
+      //follow this wall until the left IR is clear of the wall
+      //record the distance traveled
+      setSpeeds(200,200);
+      if(getLinearizedDistance(LEFT_IR)>10.0){
+        forward(3.0);
+        state = FOLLOW_LEFT_WALL2;
+        followWallDist = stepperLeft.currentPosition();
+        spin(COUNTERCLOCKWISE,90.0);
+        stepperLeft.setCurrentPosition(0);
+        forward(11.0);
+      }
+      break;
+    case FOLLOW_LEFT_WALL2:
+      //follow this wall until the left IR is clear of the wall
+      //record the distance traveled
+      setSpeeds(200,200);
+      if(getLinearizedDistance(LEFT_IR)>10.0){
+        forward(6.0);
+        state = RETURNMIDLINE_RIGHT;
+        followWall2Dist = stepperLeft.currentPosition();
+        spin(COUNTERCLOCKWISE,90.0);
+        stepperLeft.setCurrentPosition(0);
+      }
+      break;
+    case RETURNMIDLINE_LEFT:
+      //use the distance that was traveled earlier to travel back to the correct path
+      forward(followWallDist*stepsToInches);
+      spin(CLOCKWISE,90.0);
+      state = FINISHDIST;
+      break;
+    case FINISHDIST:
+      //finally go the remaining distance
+      forward(dist - (forwardCollideDist + followWall2Dist)*stepsToInches);
+      state = STOP;
+      break;
+    case STOP:
+      setSpeeds(0,0);
+      break;
+    default:
+      state = SETUP;
+      break;
+  }
+  
+  digitalWrite(ylwLED, LOW);
+  digitalWrite(grnLED, LOW);
+  digitalWrite(redLED, LOW);
+}
+
+
+/* randomWander()
+ *  This function sets the speeds of the left and the right steppers to a random speed
+ *  every 1 second
+ */
 double randLSpeed = 0.0;
 double randRSpeed = 0.0;
 long lastRandom = 0;
+
 void randomWander() {
   digitalWrite(grnLED,HIGH);
   if(millis() - lastRandom > 1000){
@@ -313,11 +563,14 @@ void randomWander() {
       lastRandom = millis();
   }
   setSpeeds(randLSpeed,randRSpeed);
-  stepperRight.runSpeed();
-  stepperLeft.runSpeed();
   digitalWrite(grnLED,LOW);
 }
 
+/* 
+ * feelForce()
+ * 
+ * This function reads the 4 IR sensors and returns the [angle,magnitude] of the force that the robot feels
+ */
 void feelForce() {
   double frontDist = getLinearizedDistance(FRONT_IR);
   double backDist = getLinearizedDistance(BACK_IR);
@@ -331,12 +584,17 @@ void feelForce() {
   // The left IR feels forces that push in the negative y direction
   // The right IR feels forces that push in the positive y direction
   yForce += -1*(12.0 - leftDist) + (12.0 - rightDist);
-  Serial.println("---------------------------------------------------------------------------");
-  Serial.print("Front: ");Serial.print(frontDist);Serial.print("   Right: ");Serial.print(rightDist);
-  Serial.print("Back: ");Serial.print(backDist);Serial.print("   Left: ");Serial.println(leftDist);
-  Serial.print("YForce: ");Serial.print(yForce);Serial.print("   XForce: ");Serial.println(xForce);
-  int leftSpeed = 0;
-  int rightSpeed = 0;
+
+
+  force[1] = sqrt(xForce*xForce+yForce*yForce);
+  force[0] = atan2(yForce,xForce);
+//  Serial.println("---------------------------------------------------------------------------");
+//  Serial.print("Front: ");Serial.print(frontDist);Serial.print("   Right: ");Serial.print(rightDist);
+//  Serial.print("Back: ");Serial.print(backDist);Serial.print("   Left: ");Serial.println(leftDist);
+//  Serial.print("YForce: ");Serial.print(yForce);Serial.print("   XForce: ");Serial.println(xForce);
+//  Serial.print("Angle: ");Serial.print(force[0]);
+//  int leftSpeed = 0;
+//  int rightSpeed = 0;
   
 //if(leftDist < 4.0 && rightDist < 4.0 && abs(xForce) < 1.0 && abs(yForce) < 1.0){
 ////  xForce += 2.0;
@@ -364,23 +622,7 @@ void feelForce() {
 //  boolean rightLimited = rightDist <= 4.0;
 //  boolean leftLimited = leftDist <= 4.0;
 
-//  double magnitude = 0.0;
-//  double angle = 0.0;
-//
-//  angle = atan2(yForce,xForce);
-//  magnitude = sqrt(xForce*xForce+yForce*yForce);
-  
-//  if(frontLimited&&backLimited&&rightLimited&&leftLimited){
-//    setSpeeds(0,0);
-//  } else if(!frontLimited&&!backLimited&&!rightLimited&&leftLimited ||
-//            frontLimited&&backLimited&&!rightLimited&&leftLimited ||
-//            frontLimited&&!backLimited&&!rightLimited&&leftLimited) {//L or FLB or FL
-//    setSpeeds(-100,0.0);
-//  } else {
-//    setSpeeds(100,100);
-//  }
-  
-//  Serial.print("Mag: ");Serial.print(magnitude);Serial.print("   Angle: ");Serial.println(angle);
+
 }
 
 void collide(int sensor){
@@ -424,7 +666,7 @@ void runAway(){
 
 
   if(frontDist <= 4.0 && backDist <= 4.0 && leftDist <= 4.0 && rightDist <= 4.0){
-    //DO NOTHIGN
+    //DO NOTHING
     setSpeeds(0.0,0.0);
   } else if(frontDist <= 4.0 && backDist <= 4.0){
     if(yForce>0.0){
@@ -567,51 +809,59 @@ void runAway(){
  * getLinearizedDistance(sensorPin)
  */
 double getLinearizedDistance(int sensor){
-  double value = 0;
+  double value = 0.0;
   switch(sensor){
     case RIGHT_IR:
-      for (int i = 0; i < 14; i++) {
-        irData.add(analogRead(RIGHT_IR);
+      for (int i = 0; i < 39; i++) {
+        irData.add(analogRead(RIGHT_IR));
       }
       value = rightIRToInches(irData.getMedian());
-      value = min(value,12.0);
+      value = min(value,4.0);
+      if(value == 4.0) value = 12.0;//6.0
       value = max(value,2.0);
+      return value;
       break;
     case LEFT_IR:
-      for (int i = 0; i < 14; i++) {
-        irData.add(analogRead(LEFT_IR);
+      for (int i = 0; i < 39; i++) {
+        irData.add(analogRead(LEFT_IR));
       }
       value = leftIRToInches(irData.getMedian());
-      value = min(value,12.0);
+      value = min(value,4.0);
+      if(value == 4.0) value = 12.0;//6
       value = max(value,2.0);
+      return value;
       break;
     case FRONT_IR:
-      for (int i = 0; i < 14; i++) {
-        irData.add(analogRead(FRONT_IR);
+      for (int i = 0; i < 39; i++) {
+        irData.add(analogRead(FRONT_IR));
       }
       value = frontIRToInches(irData.getMedian());
-      value = min(value,12.0);
+      value = min(value,4.0);
+      if(value == 4.0) value = 12.0;
       value = max(value,2.0);
+      return value;
       break;
     case BACK_IR:
-      for (int i = 0; i < 14; i++) {
-        irData.add(analogRead(BACK_IR);
+      for (int i = 0; i < 39; i++) {
+        irData.add(analogRead(BACK_IR));
       }
-      value = leftIRToInches(irData.getMedian());
-      value = min(value,12.0);
+      value = backIRToInches(irData.getMedian());
+      value = min(value,4.0);
+      if(value == 4.0) value = 12.0;//6
       value = max(value,2.0);
+      return value;
       break;
     case LEFT_SONAR:
       for (int i = 0; i < 4; i++) {
-        sensorData.add(leftSonar.ping_in());
+        sonarData.add(leftSonar.ping_in());
       }
-      return sensorData.getMedian();
+      return sonarData.getMedian();
       break;
     case RIGHT_SONAR:
       for (int i = 0; i < 4; i++) {
-        sensorData.add(rightSonar.ping_in());
+        sonarData.add(rightSonar.ping_in());
       }
-      return sensorData.getMedian();
+      return sonarData.getMedian();
       break;
     default:
       break;
@@ -786,12 +1036,12 @@ void turnSpeed2(boolean clockwise, double dgrees, double radius) {
   BLOCKING FUNCTION
 */
 void forward(double distance) {
-  stepperLeft.setCurrentPosition(0);
-  stepperRight.setCurrentPosition(0);
+//  stepperLeft.setCurrentPosition(0);
+//  stepperRight.setCurrentPosition(0);
   
   int steps = int(distance*inchesToSteps);
-  stepperLeft.moveTo(steps);
-  stepperRight.moveTo(steps);
+  stepperLeft.moveTo(steps+stepperLeft.currentPosition());
+  stepperRight.moveTo(steps+stepperRight.currentPosition());
   
   if(distance < 0){
     stopRobot();
