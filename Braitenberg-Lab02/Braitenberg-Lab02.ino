@@ -56,7 +56,6 @@
 
 #include <AccelStepper.h>//include the stepper motor library
 #include <MultiStepper.h>//include multiple stepper motor library
-#include <SharpIR.h>
 #include <NewPing.h>
 #include <RunningMedian.h>
 #include "PS2X_lib.h"    //include the PS2 game controller library
@@ -137,10 +136,6 @@ byte vibrate;
 #define RIGHT_IR A12
 #define FRONT_IR A13
 #define BACK_IR A15
-//SharpIR leftIR(SharpIR::GP2Y0A21YK0F,LEFT_IR);
-//SharpIR rightIR(SharpIR::GP2Y0A21YK0F,RIGHT_IR);
-//SharpIR backIR(SharpIR::GP2Y0A21YK0F,BACK_IR);
-//SharpIR frontIR(SharpIR::GP2Y0A21YK0F,FRONT_IR);
 
 // These functions are our custom rational fitted curves to convert the IR sensor's analog values to inches
 static inline double frontIRToInches(double analog) {return (-0.9298*analog + 1358.0)/(analog+28.26);}
@@ -148,12 +143,18 @@ static inline double rightIRToInches(double analog) {return (-0.3141*analog + 18
 static inline double leftIRToInches(double analog) {return (-0.7801*analog + 2136.0)/(analog-20.15);}
 static inline double backIRToInches(double analog) {return (-0.6391*analog + 1144.0)/(analog+14.04);}
 
-#define LEFT_SONAR A10
-#define RIGHT_SONAR A11
-NewPing leftSonar(LEFT_SONAR, LEFT_SONAR);
-NewPing rightSonar(RIGHT_SONAR, RIGHT_SONAR);
-RunningMedian sonarData(5);
-RunningMedian irData(40);
+#define LEFT_SONAR 18  //Pin on the Mega2560 that has an interrupt
+#define RIGHT_SONAR 19 //Pin on the Mega2560 that has an interrupt
+volatile uint32_t leftEchoStart = 0;                      // Records start of left echo pulse 
+volatile uint32_t leftEchoEnd = 0;                        // Records end of left echo pulse
+volatile uint32_t rightEchoStart = 0;                     // Records start of right echo pulse 
+volatile uint32_t rightEchoEnd = 0;                       // Records end of left echo pulse
+const double soundInchRoundTrip = 146.0;                  // The microseconds it takes sound to go 2 inches (1 inch round trip)
+
+RunningMedian leftSonarData(5);
+RunningMedian rightSonarData(5);
+#define NUM_IR_SAMPLES 20
+RunningMedian irData(NUM_IR_SAMPLES);
 
 #define enableLED 13    //stepper enabled LED
 #define redLED 5        //red LED for displaying states
@@ -166,30 +167,94 @@ RunningMedian irData(40);
 //interrupt function to count left encoder tickes
 void LwheelSpeed()
 {
-  encoder[LEFT] ++;  //count the left wheel encoder interrupts
+  encoder[LEFT]++;  //count the left wheel encoder interrupts
   accumTicks[LEFT]++; // count accumulated ticks for left wheel
 }
 
 //interrupt function to count right encoder ticks
 void RwheelSpeed()
 {
-  encoder[RIGHT] ++; //count the right wheel encoder interrupts
-  accumTicks[RIGHT]++; // count accumulated ticks for left wheel
+  encoder[RIGHT]++; //count the right wheel encoder interrupts
+  accumTicks[RIGHT]++; // count accumulated ticks for right wheel
 }
+
+void leftSonarInt(){
+  switch (digitalRead(LEFT_SONAR)){                   // Test to see if the signal is high or low
+    case HIGH:                                        // High so must be the start of the echo pulse
+      leftEchoEnd = 0;                                // Clear the end time
+      leftEchoStart = micros();                       // Save the start time
+      break;
+    case LOW:                                         // Low so must be the end of hte echo pulse
+      leftEchoEnd = micros();                         // Save the end time
+      long temp = leftEchoEnd - leftEchoStart;
+      if(temp < 2000){
+        leftSonarData.add(temp);                      // Calculate the pulse duration and add it to the running median
+      }
+      break;
+  }
+}
+
+void rightSonarInt(){
+  switch(digitalRead(RIGHT_SONAR)){                      // Test to see if the signal is high or low
+    case HIGH:                                           // High so must be the start of the echo pulse
+      rightEchoEnd = 0;                                  // Clear the end time
+      rightEchoStart = micros();                         // Save the start time
+      break;
+    case LOW:                                            // Low so must be the end of hte echo pulse
+      rightEchoEnd = micros();                           // Save the end time
+      long temp = rightEchoEnd - rightEchoStart;
+      if(temp < 2000){
+        rightSonarData.add(temp);                        // Calculate the pulse duration and add it to the running median
+      }
+      
+      break;
+  }
+}
+
+void initiateSonarRead(){
+  // Start the left sonar
+  detachInterrupt(digitalPinToInterrupt(LEFT_SONAR));
+  pinMode(LEFT_SONAR,OUTPUT);
+  digitalWrite(LEFT_SONAR,LOW);
+  delayMicroseconds(4);
+  digitalWrite(LEFT_SONAR,HIGH);
+  delayMicroseconds(10);
+  digitalWrite(LEFT_SONAR,LOW);
+  pinMode(LEFT_SONAR,INPUT);
+  attachInterrupt(digitalPinToInterrupt(LEFT_SONAR), leftSonarInt, CHANGE);
+
+  // Start the right sonar
+  detachInterrupt(digitalPinToInterrupt(RIGHT_SONAR));
+  pinMode(RIGHT_SONAR,OUTPUT);
+  digitalWrite(RIGHT_SONAR,LOW);
+  delayMicroseconds(4);
+  digitalWrite(RIGHT_SONAR,HIGH);
+  delayMicroseconds(10);
+  digitalWrite(RIGHT_SONAR,LOW);
+  pinMode(RIGHT_SONAR,INPUT);
+  attachInterrupt(digitalPinToInterrupt(RIGHT_SONAR), rightSonarInt, CHANGE);
+}
+
 
 void setup()
 {
+// START SERIAL MONITOR
+  Serial.begin(9600); //start serial communication at 9600 baud rate for debugging
+
+// SETUP DEBUG LEDS
+  pinMode(redLED, OUTPUT);                      //set red LED as output
+  pinMode(grnLED, OUTPUT);                      //set green LED as output
+  pinMode(ylwLED, OUTPUT);                      //set yellow LED as output
+
+// SETUP STEPPER MOTORS
   pinMode(R_STEP_PIN, OUTPUT);                  //sets pin as output
   pinMode(R_DIR_PIN, OUTPUT);                   //sets pin as output
   pinMode(L_STEP_PIN, OUTPUT);                  //sets pin as output
   pinMode(L_DIR_PIN, OUTPUT);                   //sets pin as output
   pinMode(STEP_EN_PIN, OUTPUT);                 //sets pin as output
-  digitalWrite(STEP_EN_PIN, STEP_DISABLE);  //turns off the stepper motor driver
+  digitalWrite(STEP_EN_PIN, STEP_DISABLE);      //turns off the stepper motor driver
   pinMode(enableLED, OUTPUT);                   //set enable LED as output
   digitalWrite(enableLED, LOW);                 //turn off enable LED
-  pinMode(redLED, OUTPUT);                      //set red LED as output
-  pinMode(grnLED, OUTPUT);                      //set green LED as output
-  pinMode(ylwLED, OUTPUT);                      //set yellow LED as output
   digitalWrite(redLED, HIGH);                   //turn on red LED
   digitalWrite(ylwLED, HIGH);                   //turn on yellow LED
   digitalWrite(grnLED, HIGH);                   //turn on green LED
@@ -198,16 +263,19 @@ void setup()
   digitalWrite(ylwLED, LOW);                    //turn off yellow LED
   digitalWrite(grnLED, LOW);                    //turn off green LED
 
+// SETUP ALL 4 IR SENSORS
   pinMode(LEFT_IR, INPUT);                      //sets pin as input
   pinMode(RIGHT_IR, INPUT);                     //sets pin as input
   pinMode(BACK_IR, INPUT);                      //sets pin as input
   pinMode(FRONT_IR, INPUT);                     //sets pin as input
 
-//  pinMode(LEFT_SONAR, INPUT);                   //sets pin as input
-//  pinMode(RIGHT_SONAR,INPUT);                   //sets pin as input
-
-//  attachInterrupt(digitalPinToInterrupt(LEFT_SONAR), leftSonarInt, CHANGE);
-//  attachInterrupt(digitalPinToInterrupt(RIGHT_SONAR), rightSonarInt, CHANGE);
+// SETUP LEFT AND RIGHT SONARS
+  pinMode(LEFT_SONAR, INPUT);                   //sets pin as input
+  pinMode(RIGHT_SONAR,INPUT);                   //sets pin as input
+  attachInterrupt(digitalPinToInterrupt(LEFT_SONAR), leftSonarInt, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(RIGHT_SONAR), rightSonarInt, CHANGE);
+  NewPing::timer_ms(20, initiateSonarRead); // Create a Timer2 interrupt that calls initiateSonarRead every 15 ms
+  
   
   attachInterrupt(digitalPinToInterrupt(L_ENC_PIN), LwheelSpeed, CHANGE); //init the interrupt mode for the digital pin 2  
   attachInterrupt(digitalPinToInterrupt(R_ENC_PIN), RwheelSpeed, CHANGE); //init the interrupt mode for the digital pin 3
@@ -270,74 +338,43 @@ void setup()
 #endif
 #endif
   ////////////////////////////////////////////////////////////////////////////////
-  Serial.begin(9600); //start serial communication at 9600 baud rate for debugging
+  
 }
-
-
 
 unsigned long last_read = 0;
 double robotHeading = 0.0;
 double goalX = 0.0;
 double goalY = -48.0;
+double leftSonarInch = 0.0;
 
 // Global force variable.  Gets updated by the feelForce() function every 100 ms
 double force[2];
 void loop()
 {
-  
-  //Every 100 milliseconds, poll the IR sensors 
+//  //Every 100 milliseconds, poll the IR sensors 
+//  int temp = millis() - last_read;
+//  if(temp > 100){
+//    feelForce();
+//
+//    last_read = millis();
+//  }
+
+  //Every 20 milliseconds, poll the sonar sensors 
   int temp = millis() - last_read;
-  if(temp > 100){
-//    readController();
-    
-    feelForce();
+  if(temp > 500){
     last_read = millis();
+    Serial.print("LEFT: ");Serial.println(getLinearizedDistance(LEFT_SONAR));
+    Serial.print("RIGHT: ");Serial.println(getLinearizedDistance(RIGHT_SONAR));
   }
 
 //  smartWanderStateMachine();
-  goToGoalObAvoid(goalX,goalY);
+//  goToGoalObAvoid(goalX,goalY);
 
   //Run the stepper motors at the speed they were set to in the readController() function
-  stepperRight.runSpeed();
-  stepperLeft.runSpeed();
-
-//      for (int i = 0; i < 4; i++) {
-//        irData.add(frontIR.getDistance());
-//      }
-//      Serial.println(irData.getMedian());
-//Serial.println(getLinearizedDistance(FRONT_IR));
-//delay(500);
-//  collide(FRONT_IR);
-//feelForce();
-//  delay(1000);
-//  randomWander();
-//if(detectedObstacle()){
-//  runAway();
-//}
-
-//while(true){}
-//  runAway();
-//  stepperLeft.runSpeed();
 //  stepperRight.runSpeed();
-}
+//  stepperLeft.runSpeed();
 
-//void initiateSonarReads(){
-//  noInterrupts();
-//
-//  // Start the left sonar
-//  pinMode(LEFT_SONAR,OUTPUT);
-//  digitalWrite(LEFT_SONAR,HIGH);
-//  delayMicroseconds(20);
-//  digitalWrite(LEFT_SONAR,LOW);
-//
-//  // Start the right sonar
-//  pinMode(RIGHT_SONAR,OUTPUT);
-//  digitalWrite(RIGHT_SONAR,HIGH);
-//  delayMicroseconds(20);
-//  digitalWrite(RIGHT_SONAR,LOW);
-//  
-//  interrupts();
-//}
+}
 
 
 #define RANDOM 0
@@ -354,7 +391,6 @@ void smartWanderStateMachine(){
     case RANDOM:
         digitalWrite(grnLED,HIGH);
       randomWander();
-//        setSpeeds(200,200);
       if(magnitude>=11.0){
         SWstate = COLLIDE;
         digitalWrite(grnLED,LOW);
@@ -449,8 +485,8 @@ void goToGoalObAvoid(double x,double y){
         //record how far we've gone
         forwardCollideDist = stepperLeft.currentPosition();
         //ping the sonars
-        double leftSonarDist = getLinearizedDist(LEFT_SONAR);
-        double rightSonarDist = getLinearizedDist(RIGHT_SONAR);
+        double leftSonarDist = getLinearizedDistance(LEFT_SONAR);
+        double rightSonarDist = getLinearizedDistance(RIGHT_SONAR);
 
         //decide which side to go to
         //turn left or right as a result
@@ -593,36 +629,6 @@ void feelForce() {
 //  Serial.print("Back: ");Serial.print(backDist);Serial.print("   Left: ");Serial.println(leftDist);
 //  Serial.print("YForce: ");Serial.print(yForce);Serial.print("   XForce: ");Serial.println(xForce);
 //  Serial.print("Angle: ");Serial.print(force[0]);
-//  int leftSpeed = 0;
-//  int rightSpeed = 0;
-  
-//if(leftDist < 4.0 && rightDist < 4.0 && abs(xForce) < 1.0 && abs(yForce) < 1.0){
-////  xForce += 2.0;
-//  leftSpeed = (xForce + yForce)*avoidSpeed;
-//  rightSpeed = (xForce - yForce)*avoidSpeed;
-//} else if(frontDist < 4.0 && backDist < 4.0 && abs(xForce) < 1.0 && abs(yForce) < 1.0){
-////  yForce += 2.0;
-//  leftSpeed = (xForce + yForce)*avoidSpeed;
-//  rightSpeed = (xForce - yForce)*avoidSpeed; 
-//} else if(false){
-//  
-//} else {
-//    leftSpeed = (xForce + yForce)*avoidSpeed;
-//    rightSpeed = (xForce - yForce)*avoidSpeed; 
-//}
-//  
-//  setSpeeds(leftSpeed,rightSpeed);
-//
-//  
-//  stepperRight.runSpeed();
-//  stepperLeft.runSpeed();
-
-//  boolean frontLimited = frontDist <= 4.0;
-//  boolean backLimited = backDist <= 4.0;
-//  boolean rightLimited = rightDist <= 4.0;
-//  boolean leftLimited = leftDist <= 4.0;
-
-
 }
 
 void collide(int sensor){
@@ -807,12 +813,20 @@ void runAway(){
 
 /*
  * getLinearizedDistance(sensorPin)
+ * 
+ * Depending on the type of distance sensor (sonar or IR) and the specific sensor,
+ * this function linearizes the readings and uses a running median to get an accurate 
+ * distance.  
+ * 
+ * The IR sensors have each been specifically tuned for their own linearization Ex. rightIRToInches()
+ * The Sonar sensors are being polled every 20 ms by a timer interrupt, so their data just has to be 
+ * grabbed from the running median and then processed
  */
 double getLinearizedDistance(int sensor){
   double value = 0.0;
   switch(sensor){
     case RIGHT_IR:
-      for (int i = 0; i < 39; i++) {
+      for (int i = 0; i < NUM_IR_SAMPLES-1; i++) {
         irData.add(analogRead(RIGHT_IR));
       }
       value = rightIRToInches(irData.getMedian());
@@ -822,7 +836,7 @@ double getLinearizedDistance(int sensor){
       return value;
       break;
     case LEFT_IR:
-      for (int i = 0; i < 39; i++) {
+      for (int i = 0; i < NUM_IR_SAMPLES-1; i++) {
         irData.add(analogRead(LEFT_IR));
       }
       value = leftIRToInches(irData.getMedian());
@@ -832,7 +846,7 @@ double getLinearizedDistance(int sensor){
       return value;
       break;
     case FRONT_IR:
-      for (int i = 0; i < 39; i++) {
+      for (int i = 0; i < NUM_IR_SAMPLES-1; i++) {
         irData.add(analogRead(FRONT_IR));
       }
       value = frontIRToInches(irData.getMedian());
@@ -842,7 +856,7 @@ double getLinearizedDistance(int sensor){
       return value;
       break;
     case BACK_IR:
-      for (int i = 0; i < 39; i++) {
+      for (int i = 0; i < NUM_IR_SAMPLES-1; i++) {
         irData.add(analogRead(BACK_IR));
       }
       value = backIRToInches(irData.getMedian());
@@ -852,16 +866,10 @@ double getLinearizedDistance(int sensor){
       return value;
       break;
     case LEFT_SONAR:
-      for (int i = 0; i < 4; i++) {
-        sonarData.add(leftSonar.ping_in());
-      }
-      return sonarData.getMedian();
+      return (double(leftSonarData.getMedian())/soundInchRoundTrip)-1;
       break;
     case RIGHT_SONAR:
-      for (int i = 0; i < 4; i++) {
-        sonarData.add(rightSonar.ping_in());
-      }
-      return sonarData.getMedian();
+      return (double(rightSonarData.getMedian())/soundInchRoundTrip)-1;
       break;
     default:
       break;
