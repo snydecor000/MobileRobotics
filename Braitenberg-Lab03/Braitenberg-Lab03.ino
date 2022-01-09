@@ -277,31 +277,158 @@ double goalX = 0.0;
 double goalY = -48.0;
 double leftSonarInch = 0.0;
 
+double leftWheelSpeed = 250.0;
+double rightWheelSpeed = 250.0;
+
+int state = 0;
+
+#define FOLLOW_DISTANCE_LOW 4
+#define FOLLOW_DISTANCE_HIGH 6
+#define WALL_DETECT_DIST 10
+#define IR_WALL_DETECT_DIST 4
+#define SPEED_DIFF 50
+
+#define RANDOM_WANDER 0
+#define LEFT_WALL 1
+#define RIGHT_WALL 2
+#define BOTH_WALLS 3
+#define AVOID 4
+
 // Global force variable.  Gets updated by the feelForce() function every 100 ms
 double force[2];
 void loop()
 {
 //  //Every 100 milliseconds, poll the IR sensors 
-//  int temp = millis() - last_read;
-//  if(temp > 100){
-//    feelForce();
-//
-//    last_read = millis();
-//  }
-
-  //Every 20 milliseconds, poll the sonar sensors 
   int temp = millis() - last_read;
-  if(temp > 500){
+  if(temp > 50){
+    stateMachine();
     last_read = millis();
-    Serial.print("LEFT: ");Serial.println(getLinearizedDistance(LEFT_SONAR));
-    Serial.print("RIGHT: ");Serial.println(getLinearizedDistance(RIGHT_SONAR));
   }
 
+//  followCenter(getLinearizedDistance(LEFT_SONAR), getLinearizedDistance(RIGHT_SONAR));
 
   //Run the stepper motors at the speed they were set to in the readController() function
-//  stepperRight.runSpeed();
-//  stepperLeft.runSpeed();
+  stepperRight.runSpeed();
+  stepperLeft.runSpeed();
 
+}
+
+void stateMachine() {
+  double leftSonarDist = getLinearizedDistance(LEFT_SONAR);
+  double rightSonarDist = getLinearizedDistance(RIGHT_SONAR);
+  double frontIRDist = getLinearizedDistance(FRONT_IR);
+  double backIRDist = getLinearizedDistance(BACK_IR);
+  switch (state) {
+  case RANDOM_WANDER:
+    randomWander();
+    if (leftSonarDist <= WALL_DETECT_DIST && rightSonarDist <= WALL_DETECT_DIST) {
+      state = BOTH_WALLS;
+    } else if (leftSonarDist <= WALL_DETECT_DIST) {
+      state = LEFT_WALL;
+    } else if (rightSonarDist <= WALL_DETECT_DIST) {
+      state = RIGHT_WALL;
+    } else if (frontIRDist <= IR_WALL_DETECT_DIST || backIRDist <= IR_WALL_DETECT_DIST) {
+      state = AVOID;
+    }
+    break;
+  case LEFT_WALL:
+    digitalWrite(ylwLED, HIGH);
+    followLeftWall(leftSonarDist);
+    if (rightSonarDist <= WALL_DETECT_DIST) {
+      state = BOTH_WALLS;
+    } else if (leftSonarDist > WALL_DETECT_DIST) {
+      state = RANDOM_WANDER;
+    } else if (frontIRDist <= IR_WALL_DETECT_DIST || backIRDist <= IR_WALL_DETECT_DIST) {
+      // This will be inside corner later
+      state = AVOID;
+    }
+    digitalWrite(ylwLED, LOW);
+    break;
+  case RIGHT_WALL:
+  digitalWrite(redLED, HIGH);
+    followRightWall(rightSonarDist);
+    if (leftSonarDist <= WALL_DETECT_DIST) {
+      state = BOTH_WALLS;
+    } else if (rightSonarDist > WALL_DETECT_DIST) {
+      state = RANDOM_WANDER;
+    } else if (frontIRDist <= IR_WALL_DETECT_DIST || backIRDist <= IR_WALL_DETECT_DIST) {
+      // This will be inside corner later
+      state = AVOID;
+    }
+    digitalWrite(redLED, LOW);
+    break;
+  case BOTH_WALLS:
+  digitalWrite(grnLED, HIGH);
+    followCenter(leftSonarDist, rightSonarDist);
+    if (leftSonarDist > WALL_DETECT_DIST && rightSonarDist > WALL_DETECT_DIST) {
+      state = RANDOM_WANDER;
+    } else if (rightSonarDist > WALL_DETECT_DIST) {
+      state = LEFT_WALL;
+    } else if (leftSonarDist > WALL_DETECT_DIST) {
+      state = RIGHT_WALL;
+    } else if (frontIRDist <= IR_WALL_DETECT_DIST || backIRDist <= IR_WALL_DETECT_DIST) {
+      // This will be inside corner later
+      state = AVOID;
+    }
+    digitalWrite(grnLED, LOW);
+    break;
+  case AVOID:
+    state = RANDOM_WANDER;
+    break;
+  default:
+    state = RANDOM_WANDER;
+    break;
+  }
+}
+
+/* followLeftWall(double dist)
+ *  This function uses the distance from the left sonar to set the speeds of
+ *  the right and left wheels to exhibit bang bang control when a left wall is
+ *  present
+ */
+void followLeftWall(double dist) {
+  if (dist > FOLLOW_DISTANCE_HIGH) {
+    setSpeeds(leftWheelSpeed - SPEED_DIFF, rightWheelSpeed + SPEED_DIFF);
+  } else if (dist < FOLLOW_DISTANCE_LOW){
+    setSpeeds(leftWheelSpeed + SPEED_DIFF, rightWheelSpeed - SPEED_DIFF);
+  } else {
+    setSpeeds(leftWheelSpeed, rightWheelSpeed);
+  }
+}
+
+/* followRightWall(double dist)
+ *  This function uses the distance from the right sonar to set the speeds of
+ *  the right and left wheels to exhibit bang bang control when a right wall is
+ *  present
+ */
+void followRightWall(double dist) {
+  if (dist > FOLLOW_DISTANCE_HIGH) {
+    setSpeeds(leftWheelSpeed + SPEED_DIFF, rightWheelSpeed - SPEED_DIFF);
+  } else if (dist < FOLLOW_DISTANCE_LOW) {
+    setSpeeds(leftWheelSpeed - SPEED_DIFF, rightWheelSpeed + SPEED_DIFF);
+  } else {
+    setSpeeds(leftWheelSpeed, rightWheelSpeed);
+  }
+}
+
+/* followCenter(double leftDist, double rightDist)
+ *  This function uses the distance from the left and right sonars to set the 
+ *  speeds of the right and left wheels to exhibit bang bang control when both 
+ *  left and right walls are present
+ */
+void followCenter(double leftDist, double rightDist) {
+  double diff = leftDist - rightDist;  
+  if (diff > -1 && diff < 1) {
+    setSpeeds(leftWheelSpeed, rightWheelSpeed);
+  } else if (diff < -1) {
+    setSpeeds(leftWheelSpeed + SPEED_DIFF, rightWheelSpeed - SPEED_DIFF);
+  } else {
+    setSpeeds(leftWheelSpeed - SPEED_DIFF, rightWheelSpeed + SPEED_DIFF);
+  }
+}
+
+void insideCorner(double leftSonarDist, double rightSonarDist, double frontIRDist) {
+  
 }
 
 /* randomWander()
