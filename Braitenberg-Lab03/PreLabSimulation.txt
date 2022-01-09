@@ -1,0 +1,94 @@
+#include <Servo.h>
+Servo leftservo;  
+Servo rightservo;  
+const int pingPin = 5; // Trigger Pin of Ultrasonic Sensor
+const int echoPin = 6; // Echo Pin of Ultrasonic Sensor
+void setup() {
+  leftservo.attach(9);  
+  rightservo.attach(10);
+   //set up the Serial
+  Serial.begin(9600);
+  //setupt the pin modes  
+  pinMode(pingPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  leftservo.write(90);
+  rightservo.write(90);
+}
+
+double kp = 0.7;
+double kd = 0.0;
+double setpoint = 110;
+double error = 0.0;
+double lastError = 0.0;
+double derror = 0.0;
+
+void loop() {
+  long duration;  
+  //clear the ping pin
+  digitalWrite(pingPin, LOW);
+  delayMicroseconds(2);
+  //send the 10 microsecond trigger
+  digitalWrite(pingPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(pingPin, LOW);
+  //get the pulse duration in microseconds
+  duration = pulseIn(echoPin, HIGH);
+  /*
+    TASK: The coins are around 110 cm away from the top wall.
+    Use the ultrasonic sensor data to navigate the robot in order
+    to collect the coins.
+  */
+  
+  double dist = double(duration)/57.0;
+
+  if(dist>180.0){
+  //   while(dist>180.0){
+  //     duration = 0;
+  //     leftservo.write(150);
+  //     rightservo.write(90);
+  // //clear the ping pin
+  // digitalWrite(pingPin, LOW);
+  // delayMicroseconds(2);
+  // //send the 10 microsecond trigger
+  // digitalWrite(pingPin, HIGH);
+  // delayMicroseconds(10);
+  // digitalWrite(pingPin, LOW);
+  // //get the pulse duration in microseconds
+  // duration = pulseIn(echoPin, HIGH);
+  // /*
+  //   TASK: The coins are around 110 cm away from the top wall.
+  //   Use the ultrasonic sensor data to navigate the robot in order
+  //   to collect the coins.
+  // */
+  
+  //     dist = double(duration)/57.0;
+  //   }
+    leftservo.write(90);
+    rightservo.write(90);
+    delay(500);
+    leftservo.write(180);//180
+    rightservo.write(0);//180
+    delay(5000);//1000
+    leftservo.write(90);
+    rightservo.write(90);
+    delay(500);
+    leftservo.write(0);//180
+    rightservo.write(180);//180
+    delay(1000);
+    leftservo.write(90);
+    rightservo.write(90);
+    delay(500);
+    leftservo.write(180);//180
+    rightservo.write(180);//180
+    delay(2000);
+    setpoint = 80.0;
+  } else{
+    error = setpoint-dist;
+    derror = error-lastError;
+    leftservo.write(135);
+    rightservo.write(45+kp*error+kd*derror);
+    lastError = error;
+  }
+
+  delay(50);
+}

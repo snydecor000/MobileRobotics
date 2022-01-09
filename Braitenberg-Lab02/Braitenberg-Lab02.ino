@@ -1,12 +1,11 @@
 /************************************
-  Braitenberg-Lab1.ino
+  Braitenberg-Lab2.ino
   Jordan Asman and Cory Snyder 12.12.2021
 
   This program will introduce using the stepper motor library to create motion algorithms for the robot.
   The motions will be goToAngle, goToGoal, moveCircle, moveSquare, moveFigure8 and basic movement (stop, forward, spin, reverse, turn)
   There is the inclusion of the PS2 Controller and PS2 Conroller libaray to allow for teleoperated movement and quick execution of the different 
   motions by pressing the buttons
-  
 
   The primary functions created are
   forward, reverse - given the distance in inches, both wheels move with same velocity and same direction
@@ -36,11 +35,6 @@
   digital pin 6 - green LED in series with 220 ohm resistor
   digital pin 7 - yellow LED in series with 220 ohm resistor
 
-  digital pin 22 - Data  pin for the PS2 Communication Module
-  digital pin 23 - Command pin for the PS2 Communication Module
-  digital pin 24 - Attention pin for the PS2 Communication Module
-  digital pin 25 - Clock pin for the PS2 Communication Module
-
   digital pin 2 - left stepper motor encoder pin
   digital pin 3 - right stepper motor encoder pin
 
@@ -49,25 +43,15 @@
   analog pin A13 - front IR sensor
   analog pin A12 - right IR sensor
 
-
-  analog pin A11 - right Sonar sensor 
-  analog pin A10 - left Sonar sensor
+  digital pin 19 - right Sonar sensor (has hardware interrupt)
+  digital pin 18 - left Sonar sensor (has hardware interrupt)
 */
 
 #include <AccelStepper.h>//include the stepper motor library
 #include <MultiStepper.h>//include multiple stepper motor library
 #include <NewPing.h>
 #include <RunningMedian.h>
-#include "PS2X_lib.h"    //include the PS2 game controller library
 
-
-#if 0
-#define DEBUG
-#endif
-
-#if 0
-#define PS2
-#endif
 
 //define pin numbers
 #define R_STEP_PIN  50 //right stepper motor step pin
@@ -117,21 +101,6 @@ AccelStepper stepperRight(AccelStepper::DRIVER, R_STEP_PIN, R_DIR_PIN);//create 
 AccelStepper stepperLeft(AccelStepper::DRIVER, L_STEP_PIN, L_DIR_PIN);//create instance of left stepper motor object (2 driver pins, step pin 50, direction input pin 51)
 MultiStepper steppers;//create instance to control multiple steppers at the same time
 
-#ifdef PS2
-
-//create PS2 Controller Object and variables used with it
-#define DATA 22
-#define CLOCK 25
-#define COMMAND 23
-#define ATTENTION 24
-PS2X ps2x;
-#define joystickDeadband 10
-int error;
-byte type;
-byte vibrate;
-
-#endif
-
 #define LEFT_IR A14
 #define RIGHT_IR A12
 #define FRONT_IR A13
@@ -163,6 +132,8 @@ RunningMedian irData(NUM_IR_SAMPLES);
 
 #define pauseTime 1000 //time before robot moves
 #define wait_time 1000 //time to wait between prints and starting robot
+
+//INTERRUPTS ----------------------------------------------------------------------------------------------------------------------------------------------------
 
 //interrupt function to count left encoder tickes
 void LwheelSpeed()
@@ -235,7 +206,7 @@ void initiateSonarRead(){
   attachInterrupt(digitalPinToInterrupt(RIGHT_SONAR), rightSonarInt, CHANGE);
 }
 
-
+//SETUP ---------------------------------------------------------------------------------------------------------------------------------------------------------
 void setup()
 {
 // START SERIAL MONITOR
@@ -288,57 +259,7 @@ void setup()
   steppers.addStepper(stepperLeft);//add left motor to MultiStepper
   digitalWrite(STEP_EN_PIN, STEP_ENABLE);//turns on the stepper motor driver
   digitalWrite(enableLED, HIGH);//turn on enable LED
-  delay(pauseTime); //always wait 5 seconds before the robot moves
-
-#ifdef PS2
-  //THIS CODE IS BASED OFF OF EXAMPLE CODE FROM Bill Porter
-  ////////////////////////////////////////////////////////////////////////////
-  //setup pins and settings:
-  error = ps2x.config_gamepad(CLOCK, COMMAND, ATTENTION, DATA, true, true);
-  
-#ifdef DEBUG
-  if (error == 0)
-  {
-    Serial.println("Found Controller, configured successful");
-    Serial.println("Go to www.billporter.info for updates and to report bugs.");
-    digitalWrite(LED, HIGH);//turn indicator light on to show good connection
-  }
-  else if (error == 1)
-  {
-    Serial.println("No controller found, check wiring");
-    digitalWrite(LED, LOW);//turn indicator light off
-  }
-  else if (error == 2)
-  {
-    Serial.println("Controller found but not accepting commands");
-    digitalWrite(LED, LOW);//turn indicator light off
-  }
-  else if (error == 3)
-  {
-    Serial.println("Controller refusing to enter Pressures mode");
-    digitalWrite(LED, LOW);//turn indicator light off
-  }
-#endif
-
-  type = ps2x.readType();
-  
-#ifdef DEBUG
-  switch (type)
-  {
-    case 0:
-      Serial.println("Unknown Controller type");
-      break;
-    case 1:
-      Serial.println("DualShock Controller Found");
-      break;
-    case 2:
-      Serial.println("GuitarHero Controller Found");
-      break;
-  }
-#endif
-#endif
-  ////////////////////////////////////////////////////////////////////////////////
-  
+  delay(pauseTime); //always wait 5 seconds before the robot moves  
 }
 
 unsigned long last_read = 0;
@@ -349,6 +270,8 @@ double leftSonarInch = 0.0;
 
 // Global force variable.  Gets updated by the feelForce() function every 100 ms
 double force[2];
+
+//LOOP ----------------------------------------------------------------------------------------------------------------------------------------------------------
 void loop()
 {
 //  //Every 100 milliseconds, poll the IR sensors 
@@ -359,23 +282,15 @@ void loop()
 //    last_read = millis();
 //  }
 
-  //Every 20 milliseconds, poll the sonar sensors 
-  int temp = millis() - last_read;
-  if(temp > 500){
-    last_read = millis();
-    Serial.print("LEFT: ");Serial.println(getLinearizedDistance(LEFT_SONAR));
-    Serial.print("RIGHT: ");Serial.println(getLinearizedDistance(RIGHT_SONAR));
-  }
-
 //  smartWanderStateMachine();
 //  goToGoalObAvoid(goalX,goalY);
 
   //Run the stepper motors at the speed they were set to in the readController() function
-//  stepperRight.runSpeed();
-//  stepperLeft.runSpeed();
+  stepperRight.runSpeed();
+  stepperLeft.runSpeed();
 
 }
-
+//---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 #define RANDOM 0
 #define AVOID 1
@@ -383,6 +298,10 @@ void loop()
 #define RUNAWAY 3
 int SWstate = 0;
 
+/*
+ * 
+ * 
+ */
 void smartWanderStateMachine(){
   double angle = force[0];
   double magnitude = force[1];
@@ -459,6 +378,10 @@ double forwardCollideDist;
 double followWallDist;
 double followWall2Dist;
 
+/*
+ * 
+ * 
+ */
 void goToGoalObAvoid(double x,double y){
   digitalWrite(ylwLED, HIGH);
   digitalWrite(grnLED, HIGH);
@@ -582,9 +505,10 @@ void goToGoalObAvoid(double x,double y){
 }
 
 
-/* randomWander()
- *  This function sets the speeds of the left and the right steppers to a random speed
- *  every 1 second
+/* 
+ * randomWander()
+ * This function sets the speeds of the left and the right steppers to a random speed
+ * every 1 second
  */
 double randLSpeed = 0.0;
 double randRSpeed = 0.0;
@@ -604,7 +528,6 @@ void randomWander() {
 
 /* 
  * feelForce()
- * 
  * This function reads the 4 IR sensors and returns the [angle,magnitude] of the force that the robot feels
  */
 void feelForce() {
@@ -698,118 +621,6 @@ void runAway(){
 
   spin(CLOCKWISE,angle);
 }
-
-//void runAway(){
-//  double frontDist = getLinearizedDistance(FRONT_IR);
-//  double backDist = getLinearizedDistance(BACK_IR);
-//  double rightDist = getLinearizedDistance(RIGHT_IR);
-//  double leftDist = getLinearizedDistance(LEFT_IR);
-//  double xForce = 0.0;
-//  double yForce = 0.0;
-//  // The front IR feels forces that push in the negative x direction
-//  // The back IR feels forces that push in the positive x direction
-//  xForce += -1*(12.0 - frontDist) + (12.0 - backDist);
-//  // The left IR feels forces that push in the negative y direction
-//  // The right IR feels forces that push in the positive y direction
-//  yForce += -1*(12.0 - leftDist) + (12.0 - rightDist);
-//  
-//  double magnitude = sqrt(xForce*xForce+yForce*yForce);
-//  double angle = atan2(yForce,xForce)*180.0/PI;
-//
-//  double leftSpeed = (xForce + yForce)*avoidSpeed;
-//  double rightSpeed = (xForce - yForce)*avoidSpeed; 
-//  setSpeeds(leftSpeed,rightSpeed);
-//  long timer = millis();
-//  while(millis()-timer < 100){
-//    stepperLeft.runSpeed();
-//    stepperRight.runSpeed();
-//  }
-//}
-
-//
-//void runAway(){
-//  double frontDist = getLinearizedDistance(FRONT_IR);
-//  double backDist = getLinearizedDistance(BACK_IR);
-//  double rightDist = getLinearizedDistance(RIGHT_IR);
-//  double leftDist = getLinearizedDistance(LEFT_IR);
-//  double xForce = 0.0;
-//  double yForce = 0.0;
-//  // The front IR feels forces that push in the negative x direction
-//  // The back IR feels forces that push in the positive x direction
-//  xForce += -1*(12.0 - frontDist) + (12.0 - backDist);
-//  // The left IR feels forces that push in the negative y direction
-//  // The right IR feels forces that push in the positive y direction
-//  yForce += -1*(12.0 - leftDist) + (12.0 - rightDist);
-//  
-//  double magnitude = sqrt(xForce*xForce+yForce*yForce);
-//  double angle = atan2(yForce,xForce)*180.0/PI;
-//  double radius = 20.0-magnitude;
-//  boolean turnDir = CLOCKWISE;
-//
-//  Serial.print("Angle: ");Serial.println(angle);
-//  if(frontDist <= 4.0 && backDist <= 4.0 && leftDist <= 4.0 && rightDist <= 4.0){
-////    setSpeeds(0.0,0.0);
-//  } else if(frontDist <= 4.0 && backDist <= 4.0){
-////    spin(CLOCKWISE,90.0);
-////    forward(12);
-////    setSpeeds(0.0,0.0);
-//
-//  } else if(angle>0&&angle<90){
-//    turnDir = COUNTERCLOCKWISE;
-//    angle = angle;
-//    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
-//    turnSpeed2(turnDir, angle, radius);
-////    forward(magnitude);
-//  } else if(angle>=90&&angle<180){
-//    turnDir = COUNTERCLOCKWISE;
-//    angle = -1*(180.0-angle);
-//    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
-//    turnSpeed2(turnDir, angle, radius);
-////    reverse(magnitude);
-////    spin(CLOCKWISE,180.0);
-//  } else if(angle<0&&angle>-90){
-//    turnDir = CLOCKWISE;
-//    angle = -1*angle;
-//    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
-//    turnSpeed2(turnDir, angle, radius);
-////    forward(magnitude);
-//  } else if(angle<=-90&&angle>-180) {
-//    turnDir = CLOCKWISE;
-//    angle = -1*(180.0+angle);
-//    Serial.print("Angle: ");Serial.print(angle);Serial.print("    TurnDir");Serial.println(turnDir);
-//    turnSpeed2(turnDir, angle, radius);
-////    reverse(magnitude);
-////    spin(CLOCKWISE,180.0);
-//  }
-////  } else if(angle==180.0 || angle==-180.0){
-//////    reverse(magnitude);
-//////    spin(CLOCKWISE,180.0);
-////  } else if(angle == 0.0){
-//////    forward(magnitude);
-////  } else if(angle == 90){
-////    if(leftDist <= 4.0 && rightDist <= 4.0){
-//////      forward(magnitude*2);
-////    } else {
-//////          forward(magnitude);
-//////    spin(COUNTERCLOCKWISE,90);
-//////    forward(magnitude);
-////    }
-////
-////  } else if(angle == -90.0) {
-////    if(leftDist <= 4.0 && rightDist <= 4.0){
-//////      forward(magnitude*2);
-////    } else {
-//////          forward(magnitude);
-//////    spin(CLOCKWISE,90);
-//////    forward(magnitude);
-////    }
-//
-//   else {
-////    setSpeeds(0,0);
-//  }
-//
-//
-//}
 
 /*
  * getLinearizedDistance(sensorPin)
@@ -1004,36 +815,6 @@ void turn(boolean clockwise, double dgrees, double radius) {
   runSpeedToActualPosition(); // Blocks until all are in position
 }
 
-void turnSpeed2(boolean clockwise, double dgrees, double radius) {
-  stepperLeft.setCurrentPosition(0);
-  stepperRight.setCurrentPosition(0);
-  
-  int rightSteps;
-  int leftSteps;
-  
-  if(clockwise){
-    leftSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius+spinWheelDist/2.0)));
-    rightSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius-spinWheelDist/2.0)));
-  } else {
-    leftSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius-spinWheelDist/2.0)));
-    rightSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius+spinWheelDist/2.0)));
-  }
-
-//  stepperLeft.moveTo(leftSteps);
-//  stepperRight.moveTo(rightSteps);
-
-  //If the right wheel is the outside wheel in the turn
-  if(abs(rightSteps)>=abs(leftSteps)){
-    int insideWheelSpeed = int((double(turnSpeed)/double(abs(rightSteps)))*double(abs(leftSteps)));
-    setSpeeds(sgn(leftSteps)*insideWheelSpeed,sgn(rightSteps)*turnSpeed);
-  } else {
-    int insideWheelSpeed = int((double(turnSpeed)/double(abs(leftSteps)))*double(abs(rightSteps)));
-    setSpeeds(sgn(leftSteps)*turnSpeed,sgn(rightSteps)*insideWheelSpeed);
-  }
-
-//  runSpeedToActualPosition(); // Blocks until all are in position
-}
-
 /*
   forward(double distance)
   
@@ -1094,12 +875,12 @@ void forwardEnc(double distance) {
 }
 
 /*
-  reverse(double distance)
-  This function takes in a distance (in inches) and runs the left and right steppers 
-  at the same constant speed until the robot has traveled the given distance in the
-  reverse direction.
-
-  BLOCKING FUNCTION
+ * reverse(double distance)
+ * This function takes in a distance (in inches) and runs the left and right steppers 
+ * at the same constant speed until the robot has traveled the given distance in the
+ * reverse direction.
+ * 
+ * BLOCKING FUNCTION
 */
 void reverse(int distance) {
   int steps = int(distance*inchesToSteps);
@@ -1117,9 +898,8 @@ void reverse(int distance) {
 }
 
 /*
-  stop()
-
-  This function stops both stepper motors by setting their speeds to 0
+ * stop()
+ * This function stops both stepper motors by setting their speeds to 0
 */
 void stopRobot() {
   setSpeeds(0,0);
@@ -1127,12 +907,11 @@ void stopRobot() {
 
 
 /*
-  moveCircle(clockwise, diameter)
-
-  This function takes in a the direction of the circle (clock or counterclockwise) and then
-  the diameter in inches.  
-
-  BLOCKING FUNCTION
+ * moveCircle(clockwise, diameter)
+ * This function takes in a the direction of the circle (clock or counterclockwise) and then
+ * the diameter in inches.  
+ * 
+ * BLOCKING FUNCTION
 */
 void moveCircle(boolean clockwise, double diameter) {
   digitalWrite(redLED, HIGH);
@@ -1141,12 +920,11 @@ void moveCircle(boolean clockwise, double diameter) {
 }
 
 /*
-  The moveFigure8() 
-  
-  Takes the diameter in inches as the input. It uses the moveCircle() function
-  twice with 2 different direcitons to create a figure 8 with circles of the given diameter.
-
-  BLOCKING FUNCTION
+ * moveFigure8() 
+ * Takes the diameter in inches as the input. It uses the moveCircle() function
+ * twice with 2 different direcitons to create a figure 8 with circles of the given diameter.
+ * 
+ * BLOCKING FUNCTION
 */
 void moveFigure8(double diameter) {
   digitalWrite(redLED, HIGH);
@@ -1160,12 +938,11 @@ void moveFigure8(double diameter) {
 
 
 /*
-  goToAngle(angle)
-
-  This function uses the spin function to go to a specific angle in degrees, but it uses the encoders 
-  to adjust for inconsistencies after the spin happens
-
-  BLOCKING FUNCTION
+ * goToAngle(angle)
+ * This function uses the spin function to go to a specific angle in degrees, but it uses the encoders 
+ * to adjust for inconsistencies after the spin happens
+ * 
+ * BLOCKING FUNCTION
 */
 void goToAngle(double angle) {
   digitalWrite(grnLED, HIGH);
@@ -1199,7 +976,6 @@ void goToAngle(double angle) {
 
 /*
  * goToGoal(x,y)
- * 
  * This function takes in an x and y coordinate in inches and moves the robot to that location
  * 
  * The positive x axis is out of the front of the robot, and then the positive y axis is coming 
@@ -1223,14 +999,13 @@ void goToGoal(int x, int y) {
 }
 
 /*
-  moveSquare(sideLength)
-
-  This function moves the robot in a square shape. The sideLength is in inches. 
-  by calling the forward function
-  and the pivot function 4 times. The forward function utilizes encoders to track
-  the distance traveled by the robot
-
-  BLOCKING FUNCTION
+ * moveSquare(sideLength)
+ * This function moves the robot in a square shape. The sideLength is in inches. 
+ * by calling the forward function
+ * and the pivot function 4 times. The forward function utilizes encoders to track
+ * the distance traveled by the robot
+ * 
+ * BLOCKING FUNCTION
 */
 void moveSquare(double side) {
   digitalWrite(redLED, HIGH);
@@ -1262,91 +1037,9 @@ void setSpeeds(double left, double right) {
   stepperRight.setSpeed(right*rightSpeedAdjustment);
 }
 
-#ifdef PS2
-/*
- * The readController() function interfaces with the PS2 Controller Reciever to
- * retrieve the most recent joystick and button values.  From these joystick and button
- * values, the speed of the left and right stepper motors are then set accordingly
- * using the AccelStepper library
- * 
- * Several buttons on the controller are also setup to run different pre-planned actions
- * like moveSquare(), and spin().  These functions are BLOCKING, so there is a chance this function
- * BLOCKS.
- * 
- * SOMETIMES BLOCKING
- */
-void readController()
-{
-  int xAxis;//x axis value
-  int yAxis;//y axis value
-
-  ps2x.read_gamepad(false, vibrate);//update ps2 controller information
-
-  if (abs(ps2x.Analog(PSS_LY) - 128) >= joystickDeadband)//if the axis is outside of the set deadband
-    yAxis = (ps2x.Analog(PSS_LY) - 128) * -1;//y axis is reversed so reverse it and make it so the center is 0
-  else
-    yAxis = 0;
-
-  if (abs(ps2x.Analog(PSS_RX) - 128) >= joystickDeadband)//if the axis is outside of the set deadband
-    xAxis = (ps2x.Analog(PSS_RX) - 128);//make it so the center is 0
-  else
-    xAxis = 0;
-
-  if (ps2x.Button(PSB_R2)) //Boost Button(Right Trigger)
-  {
-    xAxis = map(xAxis, 0, 128, 0, 110);//map axis values to drive percentage from 0 to 110%
-    yAxis = map(yAxis, 0, 128, 0, 110);
-  }
-  else//regular diving
-  {
-    xAxis = map(xAxis, 0, 128, 0, 50);//map axis values to drive percentages from 0 to 50%
-    yAxis = map(yAxis, 0, 128, 0, 50);
-  }
-
-  //convert mapped x and y axis values into left and right speed values
-  //using an arcade configuration ("driving" controlled by y axis, "turning" controlled by x axis)
-  int leftSpeed = (yAxis + xAxis)*10;
-  int rightSpeed = (yAxis - xAxis)*10;
-
-  //if robot is commanded to move forward or turn right
-  if (yAxis > 0 || xAxis > 0){
-    //drive robot forward according to speed values
-    setSpeeds(leftSpeed,rightSpeed);//set the motor speeds
-  } else if (yAxis < 0 || xAxis < 0){ //robot is commanded to move backwards or turn left
-    //drive robot in reverse according to speed values
-    setSpeeds(leftSpeed,rightSpeed);//set the motor speeds
-  } else{
-    stopRobot();
-  }
-
-  if(ps2x.ButtonPressed(PSB_TRIANGLE)){
-    spin(CLOCKWISE,360.0);
-    stopRobot();
-    delay(1000);
-  } else if(ps2x.ButtonPressed(PSB_CROSS)){
-    moveSquare(24.0);
-    stopRobot();
-    delay(1000);
-  } else if(ps2x.ButtonPressed(PSB_CIRCLE)){
-    moveCircle(CLOCKWISE,24.0);
-    stopRobot();
-    delay(1000);
-  } else if(ps2x.ButtonPressed(PSB_L2)){
-    pivot(CLOCKWISE,360.0);
-    stopRobot();
-    delay(1000);
-  } else if(ps2x.ButtonPressed(PSB_R3)){
-    stopRobot();
-    moveFigure8(12.0);
-    stopRobot();
-  }
-}
-#endif
-
-
-/* sgn(value)
- *  This function takes in a value and return the sign of the value
- *  -1, 1, or 0
+/* 
+ * sgn(value)
+ * This function takes in a value and return the sign of the value -1, 1, or 0
  */
 static inline int8_t sgn(double val) {
   if (val < 0) return -1;
@@ -1405,10 +1098,11 @@ void runSpeedToActualPosition(){
   }
 }
 
-/*This function, runToStop(), will run the robot until the target is achieved and
-   then stop it
-
-   BLOCKING FUNCTION
+/*
+ * runToStop()
+ * This function will run the robot until the target is achieved and then stop it
+ * 
+ * BLOCKING FUNCTION
 */
 void runToStop ( void ) {
   int runNow = 1;

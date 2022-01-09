@@ -1,0 +1,214 @@
+200 steps per wheel revolution
+
+goDistance(double distance)
+	set the speed and acceleration of both steppers according to the distance
+	
+	calculate the # of ticks to turn based on the distance
+	set the steppers to go the # of ticks
+
+	see where the encoders are now and save it
+
+	use the runSpeedToPosition() on each stepper to start moving each stepper
+	use the runToStop() function to block the code and wait for the steppers
+
+	check with the encoder to see if we made it all the way
+	if not
+		turn the motors more
+	
+
+goToAngle(double radians)
+	set the speed and acceleration of both steppers according to the angle
+	
+	calculate the # of ticks to turn based on the angle
+	set the steppers to go the # of ticks
+
+	see where the encoders are now and save it
+
+	loop until distanceToGo() is small
+		run the steppers
+
+	check with the encoder to see if we made it all the way
+	if not
+		turn the motors more
+	
+
+goToGoal(double x, double y)
+	calculate the angle atan2 (y,x)
+	goToAngle(angle)
+	
+	calculate the distance
+	goDistance(distance)
+
+
+square(double sideLen)
+	goDistance(sideLen)
+	goToAngle(90 degrees)
+	goDistance(sideLen)
+	goToAngle(90 degrees)	
+	goDistance(sideLen)
+	goToAngle(90 degrees)
+	goDistance(sideLen)
+	goToAngle(90 degrees)
+
+arc(double degrees, double radius, boolean clockwise)
+	set the speed and acceleration of both steppers according to the arc
+	
+	calculate the # of ticks to turn based on the arc
+	set the steppers to go the # of ticks
+
+	loop until distanceToGo() is small
+		run the steppers
+
+circle(double diameter, boolean clockwise)
+	arc(360,diameter/2,clockwise)
+
+figure8(double diameter)
+	circle(diameter,true)
+	circle(diameter,false)
+	
+	
+const double degreesToTime = 3100.0/90.0;
+void goToAngle(double degrees) {
+  double time;
+  if(degrees > 0){
+    leftservo.write(10);
+    rightservo.write(10);
+    time = degrees*degreesToTime;
+  } else {
+    leftservo.write(170);
+    rightservo.write(170);
+    time = -degrees*degreesToTime;
+  }
+  delay(time);
+
+  //stop moving
+  leftservo.write(90);
+  rightservo.write(90);
+}
+
+const double unitLenToTime = 3000.0/1.0;
+void goDistance(double len){
+  double time;
+  if(len > 0){
+    leftservo.write(170);
+    rightservo.write(10);
+    time = len*unitLenToTime;
+  } else {
+    leftservo.write(10);
+    rightservo.write(170);
+    time = -len*unitLenToTime;
+  }
+  delay(time);
+
+  //stop moving
+  leftservo.write(90);
+  rightservo.write(90);
+}
+
+void square(){
+  goDistance(1);
+  delay(250);
+  goToAngle(-90);  
+  delay(250);
+  goDistance(1);
+  delay(250);
+  goToAngle(-90);
+  delay(250);
+  goDistance(1);
+  delay(250);
+  goToAngle(-90);
+  delay(250);
+  goDistance(1);
+  delay(250);
+  goToAngle(-90);
+}
+
+void goToGoal(double x, double y){
+  double radians = atan2(y,x);
+  double degrees = radians*(180.0/3.14159265);
+  double dist = sqrt(y*y+x*x);
+
+  goToAngle(degrees);
+  delay(250);
+  goDistance(dist);
+}
+
+/////////////////////////////////////////////////Everything
+#include <Servo.h>
+#include <math.h>
+Servo leftservo;  
+Servo rightservo;  
+void setup() {
+  leftservo.attach(9);  
+  rightservo.attach(10); 
+  goToGoal(1,1);
+}
+
+void loop() {
+}
+
+const double degreesToTime = 3075.0/90.0;
+void goToAngle(double degrees) {
+  double time;
+  if(degrees > 0){
+    leftservo.write(10);
+    rightservo.write(10);
+    time = degrees*degreesToTime;
+  } else {
+    leftservo.write(170);
+    rightservo.write(170);
+    time = -degrees*degreesToTime;
+  }
+  delay(time);
+
+  //stop moving
+  leftservo.write(90);
+  rightservo.write(90);
+}
+
+const double unitLenToTime = 3000.0/1.0;
+void goDistance(double len){
+  double time;
+  if(len > 0){
+    leftservo.write(170);
+    rightservo.write(10);
+    time = len*unitLenToTime;
+  } else {
+    leftservo.write(10);
+    rightservo.write(170);
+    time = -len*unitLenToTime;
+  }
+  delay(time);
+
+  //stop moving
+  leftservo.write(90);
+  rightservo.write(90);
+}
+
+void goToGoal(double x, double y){
+  double radians = atan2(y,x);
+  double degrees = radians*(180.0/3.14159265);
+  double dist = sqrt(y*y+x*x);
+
+  goToAngle(degrees);
+  delay(250);
+  goDistance(dist);
+}
+
+void square(){
+  goDistance(1);
+  delay(250);
+  goToAngle(-90);  
+  delay(250);
+  goDistance(1);
+  delay(250);
+  goToAngle(-90);
+  delay(250);
+  goDistance(1);
+  delay(250);
+  goToAngle(-90);
+  delay(250);
+  goDistance(1);
+  delay(250);
+  goToAngle(-90);
+}
