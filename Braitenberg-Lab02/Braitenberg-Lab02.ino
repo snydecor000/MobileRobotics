@@ -1,13 +1,24 @@
 /************************************
   Braitenberg-Lab2.ino
-  Jordan Asman and Cory Snyder 12.12.2021
+  Jordan Asman and Cory Snyder 12.16.2021
 
-  This program will introduce using the stepper motor library to create motion algorithms for the robot.
-  The motions will be goToAngle, goToGoal, moveCircle, moveSquare, moveFigure8 and basic movement (stop, forward, spin, reverse, turn)
-  There is the inclusion of the PS2 Controller and PS2 Conroller libaray to allow for teleoperated movement and quick execution of the different 
-  motions by pressing the buttons
+  This program focuses on the use of IR and Sonar sensors and the implementation of smart wandering along with go to goal with obstacle avoidance.
+  We will learn how to use state machines to implement more complex robot behaviors by combining simpler states together.  
 
   The primary functions created are
+  leftSonarInt, rightSonarInt - these functions are called on the sonar pin interrupts.  They count the lenght of the echo pulse coming from the sonars
+  initiateSonarRead - this function sends a pulse to both of the sonars to initiate a sonar pulse and digital reading
+
+  smartWanderStateMachine - This handles switching betweens states for the smart wander behavior
+  goToGoalObAvoid - handles switching between states for the go to goal with obstacle avoidance
+  randomWander - randomly sets the speeds of the left and right steppers to move randomly
+  feelForce - using all 4 of the IR sensors, this calculates the magnitude and direction of the force felt by the robot due to near by objects
+  detectedObstacle - returns a boolean for if an obstacle is within 4 inches of the robot
+  collide - implements the collide behavior using the front IR sensor
+  runAway - implements the runAway behavior using all 4 of the IR sensors
+  getLinearizedDistance - take in a sensor's pin number and returns the distance in inches for that sensor. Works with all 4 IR and both the sonar sensors
+  
+  ------------- Previous Functions ------------
   forward, reverse - given the distance in inches, both wheels move with same velocity and same direction
   forwardEnc - same as the forward function, but it uses the encoders to go a distance instead of stepper steps
   pivot - given the direction of clockwise or counterclockwise and the degrees, one wheel stationary, one wheel moves forward or back
@@ -49,9 +60,8 @@
 
 #include <AccelStepper.h>//include the stepper motor library
 #include <MultiStepper.h>//include multiple stepper motor library
-#include <NewPing.h>
-#include <RunningMedian.h>
-
+#include <NewPing.h>      //include library that runs the timer interrupts for the sonars
+#include <RunningMedian.h>//include library that handles the running median for sensor data
 
 //define pin numbers
 #define R_STEP_PIN  50 //right stepper motor step pin
@@ -120,8 +130,8 @@ volatile uint32_t rightEchoStart = 0;                     // Records start of ri
 volatile uint32_t rightEchoEnd = 0;                       // Records end of left echo pulse
 const double soundInchRoundTrip = 146.0;                  // The microseconds it takes sound to go 2 inches (1 inch round trip)
 
-RunningMedian leftSonarData(5);
-RunningMedian rightSonarData(5);
+RunningMedian leftSonarData(25);
+RunningMedian rightSonarData(25);
 #define NUM_IR_SAMPLES 20
 RunningMedian irData(NUM_IR_SAMPLES);
 
@@ -149,6 +159,10 @@ void RwheelSpeed()
   accumTicks[RIGHT]++; // count accumulated ticks for right wheel
 }
 
+/*
+ * leftSonarInt()
+ * Calculates the length of the echo pulse for the left sonar
+ */
 void leftSonarInt(){
   switch (digitalRead(LEFT_SONAR)){                   // Test to see if the signal is high or low
     case HIGH:                                        // High so must be the start of the echo pulse
@@ -158,13 +172,17 @@ void leftSonarInt(){
     case LOW:                                         // Low so must be the end of hte echo pulse
       leftEchoEnd = micros();                         // Save the end time
       long temp = leftEchoEnd - leftEchoStart;
-      if(temp < 2000){
+//      if(temp < 2000){
         leftSonarData.add(temp);                      // Calculate the pulse duration and add it to the running median
-      }
+//      }
       break;
   }
 }
 
+/*
+ * rightSonarInt()
+ * Calculates the length of the echo pulse for the right sonar
+ */
 void rightSonarInt(){
   switch(digitalRead(RIGHT_SONAR)){                      // Test to see if the signal is high or low
     case HIGH:                                           // High so must be the start of the echo pulse
@@ -174,14 +192,18 @@ void rightSonarInt(){
     case LOW:                                            // Low so must be the end of hte echo pulse
       rightEchoEnd = micros();                           // Save the end time
       long temp = rightEchoEnd - rightEchoStart;
-      if(temp < 2000){
+//      if(temp < 2000){
         rightSonarData.add(temp);                        // Calculate the pulse duration and add it to the running median
-      }
+//      }
       
       break;
   }
 }
 
+/*
+ * initiateSonarRead()
+ * Begins the sonar reading process by sending a 10 microsecond pulse to both of the sonars
+ */
 void initiateSonarRead(){
   // Start the left sonar
   detachInterrupt(digitalPinToInterrupt(LEFT_SONAR));
@@ -274,20 +296,21 @@ double force[2];
 //LOOP ----------------------------------------------------------------------------------------------------------------------------------------------------------
 void loop()
 {
-//  //Every 100 milliseconds, poll the IR sensors 
-//  int temp = millis() - last_read;
-//  if(temp > 100){
+  //Every 100 milliseconds, poll the IR sensors 
+  int temp = millis() - last_read;
+  if(temp > 1000){
 //    feelForce();
-//
-//    last_read = millis();
-//  }
+    Serial.print("Left: ");Serial.println(leftSonarData.getMedian());
+    Serial.print("Right: ");Serial.println(rightSonarData.getMedian());
+    last_read = millis();
+  }
 
 //  smartWanderStateMachine();
 //  goToGoalObAvoid(goalX,goalY);
 
   //Run the stepper motors at the speed they were set to in the readController() function
-  stepperRight.runSpeed();
-  stepperLeft.runSpeed();
+//  stepperRight.runSpeed();
+//  stepperLeft.runSpeed();
 
 }
 //---------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -299,7 +322,9 @@ void loop()
 int SWstate = 0;
 
 /*
+ * smartWanderStateMachine()
  * 
+ * This function implements the smart wander robot behavior through a state machine
  * 
  */
 void smartWanderStateMachine(){
@@ -379,7 +404,10 @@ double followWallDist;
 double followWall2Dist;
 
 /*
+ * goToGoalObAvoid()
  * 
+ * This function implements the go to goal with obstacle avoidance behavior using
+ * a state machine 
  * 
  */
 void goToGoalObAvoid(double x,double y){
@@ -554,6 +582,11 @@ void feelForce() {
 //  Serial.print("Angle: ");Serial.print(force[0]);
 }
 
+/*
+ * collide(sensor)
+ * Depending on the desired sensor, this function with drive the robot straight until an obstacle is detected 
+ * within the collide distance
+ */
 void collide(int sensor){
   digitalWrite(redLED, HIGH);
   setSpeeds(collideSpeed,collideSpeed);
@@ -565,6 +598,11 @@ void collide(int sensor){
   digitalWrite(redLED, LOW);
 }
 
+/*
+ * detectedObstacle()
+ * This function checks each of the IR sensors to see if an object is within the collide distance
+ * If so, true is returned
+ */
 boolean detectedObstacle(){
   double frontDist = getLinearizedDistance(FRONT_IR);
   double backDist = getLinearizedDistance(BACK_IR);
@@ -574,6 +612,10 @@ boolean detectedObstacle(){
   return frontDist <= COLLIDE_DIST || backDist <= COLLIDE_DIST || leftDist <= COLLIDE_DIST || rightDist <= COLLIDE_DIST;
 }
 
+/* 
+ * runAway()
+ * This function polls all 4 of the IR sensors and then runs away from any obstacle detected in its collide range
+ */
 void runAway(){
   double frontDist = getLinearizedDistance(FRONT_IR);
   double backDist = getLinearizedDistance(BACK_IR);
