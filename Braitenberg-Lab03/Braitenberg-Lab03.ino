@@ -304,7 +304,8 @@ int state = 0;
 
 const double kp = 50;                  // The proportional control gain for single wall following
 const double kp_center = 50;           // The proportional control gain for center following
-const double kd = 5;                   // The derivative control gain for single wall following
+const double kd = 200;                 // The derivative control gain for single wall following
+const double kd_center = 200;          // The derivative control gain for center following
 
 
 // Global force variable.  Gets updated by the feelForce() function every 100 ms
@@ -313,10 +314,11 @@ void loop()
 {
 //  //Every 100 milliseconds, poll the IR sensors 
   int temp = millis() - last_read;
-  if(temp > 50){
-    followLeftWallPD(getLinearizedDistance(LEFT_SONAR));
+  if(temp > 100){
+//    followLeftWallPD(getLinearizedDistance(LEFT_SONAR));
 //    proportionalControlStateMachine();
 //    bangBangStateMachine();
+    PDControlStateMachine();
     last_read = millis();
   }
 
@@ -543,6 +545,154 @@ void followLeftWall(double dist) {
   }
 }
 
+bool fromRandomW = false;
+void PDControlStateMachine() {
+  double leftSonarDist = getLinearizedDistance(LEFT_SONAR);
+  double rightSonarDist = getLinearizedDistance(RIGHT_SONAR);
+  double frontIRDist = getLinearizedDistance(FRONT_IR);
+  double backIRDist = getLinearizedDistance(BACK_IR);
+  switch (state) {
+  case RANDOM_WANDER:
+    digitalWrite(grnLED,HIGH);
+    randomWander();
+    if (leftSonarDist <= WALL_DETECT_DIST && rightSonarDist <= WALL_DETECT_DIST) {
+      state = BOTH_WALLS;
+      digitalWrite(grnLED,LOW);
+    } else if (leftSonarDist <= WALL_DETECT_DIST) {
+      state = LEFT_WALL;
+      fromRandomW = true;
+      digitalWrite(grnLED,LOW);
+    } else if (rightSonarDist <= WALL_DETECT_DIST) {
+      state = RIGHT_WALL;
+      fromRandomW = true;
+      digitalWrite(grnLED,LOW);
+    } else if (frontIRDist <= IR_WALL_DETECT_DIST || backIRDist <= IR_WALL_DETECT_DIST) {
+      state = AVOID;
+      digitalWrite(grnLED,LOW);
+    }
+    break;
+  case LEFT_WALL:
+    digitalWrite(ylwLED,HIGH);
+    digitalWrite(grnLED,HIGH);
+    followLeftWallPD(leftSonarDist);
+    
+    // If just coming from random, don't transition out of this state just yet
+    if(fromRandomW){
+      fromRandomW = false;
+      break;
+    }
+    if (rightSonarDist <= WALL_DETECT_DIST) {
+      state = BOTH_WALLS;
+      digitalWrite(ylwLED,LOW);
+      digitalWrite(grnLED,LOW);
+    } else if (leftSonarDist > WALL_DETECT_DIST) {
+      state = OUTSIDE_CORNER_LEFT;
+      digitalWrite(ylwLED,LOW);
+      digitalWrite(grnLED,LOW);
+    } else if (frontIRDist <= IR_WALL_DETECT_DIST) {
+      digitalWrite(ylwLED,LOW);
+      digitalWrite(grnLED,LOW);
+      state = INSIDE_CORNER;
+    }
+//    digitalWrite(ylwLED, LOW);
+    break;
+  case RIGHT_WALL:
+    digitalWrite(redLED,HIGH);
+    digitalWrite(ylwLED,HIGH);
+    followRightWallPD(rightSonarDist);
+
+    // If just coming from random, don't transition out of this state just yet
+    if(fromRandomW){
+      fromRandomW = false;
+      break;
+    }
+    if (leftSonarDist <= WALL_DETECT_DIST) {
+      state = BOTH_WALLS;
+      digitalWrite(redLED,LOW);
+      digitalWrite(ylwLED,LOW);
+    } else if (rightSonarDist > WALL_DETECT_DIST) {
+      state = OUTSIDE_CORNER_RIGHT;
+      digitalWrite(redLED,LOW);
+      digitalWrite(ylwLED,LOW);
+    } else if (frontIRDist <= IR_WALL_DETECT_DIST) {
+      state = INSIDE_CORNER;
+      digitalWrite(redLED,LOW);
+      digitalWrite(ylwLED,LOW);
+    }
+//    digitalWrite(redLED, LOW);
+    break;
+  case BOTH_WALLS:
+    digitalWrite(redLED,HIGH);
+    digitalWrite(ylwLED,HIGH);
+    digitalWrite(grnLED,HIGH);
+    followCenterPD(leftSonarDist, rightSonarDist);
+    if (leftSonarDist > WALL_DETECT_DIST && rightSonarDist > WALL_DETECT_DIST) {
+      state = RANDOM_WANDER;
+      digitalWrite(redLED,LOW);
+      digitalWrite(ylwLED,LOW);
+      digitalWrite(grnLED,LOW);
+    } else if (rightSonarDist > WALL_DETECT_DIST) {
+      state = LEFT_WALL;
+      digitalWrite(redLED,LOW);
+      digitalWrite(ylwLED,LOW);
+      digitalWrite(grnLED,LOW);
+    } else if (leftSonarDist > WALL_DETECT_DIST) {
+      state = RIGHT_WALL;
+      digitalWrite(redLED,LOW);
+      digitalWrite(ylwLED,LOW);
+      digitalWrite(grnLED,LOW);
+    } else if (frontIRDist <= IR_WALL_DETECT_DIST) {
+      state = HALLWAY_END;
+      digitalWrite(redLED,LOW);
+      digitalWrite(ylwLED,LOW);
+      digitalWrite(grnLED,LOW);
+    }
+//    digitalWrite(grnLED, LOW);
+    break;
+  case INSIDE_CORNER:
+    insideCorner(leftSonarDist, rightSonarDist, frontIRDist); 
+      if (leftSonarDist > rightSonarDist) {
+        state = RIGHT_WALL;
+      } else {
+        state = LEFT_WALL;
+      }
+    break;
+  case OUTSIDE_CORNER_LEFT:
+    outsideCornerLeft();
+    leftSonarDist = getLinearizedDistance(LEFT_SONAR);
+    if (leftSonarDist <= WALL_DETECT_DIST) {
+      state = LEFT_WALL;
+    } else {
+      state = RANDOM_WANDER;
+    }
+    break;
+  case OUTSIDE_CORNER_RIGHT:
+    outsideCornerRight();
+    rightSonarDist = getLinearizedDistance(RIGHT_SONAR);
+    if (rightSonarDist <= WALL_DETECT_DIST) {
+      state = RIGHT_WALL;
+    } else {
+      state = RANDOM_WANDER;
+    }
+    break;
+  case HALLWAY_END:
+    digitalWrite(redLED,HIGH);
+    digitalWrite(grnLED,HIGH);
+    hallwayEnd(frontIRDist);
+    state = BOTH_WALLS;
+    digitalWrite(redLED,LOW);
+    digitalWrite(grnLED,LOW);
+    break; 
+  case AVOID:
+    runAway();
+    state = RANDOM_WANDER;
+    break;
+  default:
+    state = RANDOM_WANDER;
+    break;
+  }
+}
+
 /* followLeftWallP(double dist)
  *  This function uses the distance from the left sonar find the error from the 
  *  setpoint. The speeds of the right and left wheels are then set based on the
@@ -609,6 +759,23 @@ void followRightWallP(double dist) {
   setSpeeds(leftWheelSpeed - controlEffort, rightWheelSpeed + controlEffort);
 }
 
+double pastErrorRight = 0.0;
+/* followRightWallPD(double dist)
+ *  This function uses the distance from the right sonar find the error from the 
+ *  setpoint. The speeds of the right and left wheels are then set based on the
+ *  calculated error and set proportional control gain to exhibit proportional 
+ *  control when a right wall is present
+ */
+void followRightWallPD(double dist) {
+  double error = SETPOINT - dist; 
+  double errorDiff = error - pastErrorRight;
+  double controlEffort = error*kp + errorDiff*kd;
+  controlEffort = max(controlEffort, -MAX_CONTROL_EFFORT);
+  controlEffort = min(controlEffort, MAX_CONTROL_EFFORT);
+  setSpeeds(leftWheelSpeed - controlEffort, rightWheelSpeed + controlEffort);
+  pastErrorRight = error;
+}
+
 /* followCenter(double leftDist, double rightDist)
  *  This function uses the distance from the left and right sonars to set the 
  *  speeds of the right and left wheels to exhibit bang bang control when both 
@@ -637,6 +804,23 @@ void followCenterP(double leftDist, double rightDist) {
   controlEffort = max(controlEffort, -MAX_CONTROL_EFFORT);
   controlEffort = min(controlEffort, MAX_CONTROL_EFFORT);
   setSpeeds(leftWheelSpeed - controlEffort, rightWheelSpeed + controlEffort);
+}
+
+double pastErrorCenter = 0.0;
+/* followCenterPD(double dist)
+ *  This function uses the differance between the right and left sonar distances 
+ *  to find the error. The speeds of the right and left wheels are then set based 
+ *  on the calculated error and set proportional control gain to exhibit proportional 
+ *  control when the right and left walls are present
+ */
+void followCenterPD(double leftDist, double rightDist) {
+  double error = leftDist - rightDist;
+  double errorDiff = error - pastErrorCenter;
+  double controlEffort = error*kp_center + errorDiff*kd_center;
+  controlEffort = max(controlEffort, -MAX_CONTROL_EFFORT);
+  controlEffort = min(controlEffort, MAX_CONTROL_EFFORT);
+  setSpeeds(leftWheelSpeed - controlEffort, rightWheelSpeed + controlEffort);
+  pastErrorCenter = error;
 }
 
 void insideCorner(double leftSonarDist, double rightSonarDist, double frontIRDist) {
