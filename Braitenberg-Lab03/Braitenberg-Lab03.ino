@@ -2,28 +2,21 @@
   Braitenberg-Lab03.ino
   Jordan Asman and Cory Snyder 1.6.2022
 
-  This program will introduce using the stepper motor library to create motion algorithms for the robot.
-  The motions will be goToAngle, goToGoal, moveCircle, moveSquare, moveFigure8 and basic movement (stop, forward, spin, reverse, turn)
-  There is the inclusion of the PS2 Controller and PS2 Conroller libaray to allow for teleoperated movement and quick execution of the different 
-  motions by pressing the buttons
+  This program introduces the concept of feedback control through wall following.  Using sonar and IR sensors, the robot navigates its 
+  environment and follows left and right walls (including hallways) even handling inside and outside corners.  The wall following is 
+  implemented using three different control architectures in this code.  There is Bang Bang control, P control, and PD control
   
 
-  The primary functions created are
-  forward, reverse - given the distance in inches, both wheels move with same velocity and same direction
-  forwardEnc - same as the forward function, but it uses the encoders to go a distance instead of stepper steps
-  pivot - given the direction of clockwise or counterclockwise and the degrees, one wheel stationary, one wheel moves forward or back
-  spin - given the direction of clockwise or counterclockwise and the degrees, both wheels move with same velocity but opposite directions
-  turn - given the direction of clockwise or counterclockwise, the degrees, and the turn radius in inches, both wheels move with same direction different velocity
-  stopRobot - both wheels stationary
-  setSpeeds - given the speed for the left and right stepper motors, this sets the speed.  Has the right adjustment factor to help the robot go straight
-  runSpeedToActualPosition - Custom implementation of the Multistepper runSpeedToPosition.  Has decceleration at the end of the motion.
-  calibrate - given the wheel and direction, this will spin the wheel until a encoder tick is registered. Ensures consistent encoder behavior when used in other functions
-  moveSquare - given the side length in inches of a square, move the robot in a square using encoders
-  moveCircle - given the diameter in inches and direction of clockwise or counterclockwise, move the robot in a circle with that diameter
-  moveFigure8 - given the diameter in inches, use the moveCircle() function with direction input to create a Figure 8
-  goToAngle - given an angle in degrees, the robot spins and then uses encoders to ensure that the spin was accurate
-  goToGoal - given a coordiate location in inches (x,y), the robot will spin and then drive forward with encoders to move itself to that coordinate
-
+  The primary functions created are:
+  bangBangStateMachine - handles the state machine for the bang bang wall following functions
+  proportionalControlStateMachine - handles the state machine for the proportional wall following functions
+  PDControlStateMachine - handles the state machine for the PD wall following functions
+  followLeftWall, followLeftWallP, followLeftWallPD - implements the follow left wall behavior using bang bang, P, and PD control respectively
+  followRightWall, followRightWallP, followRightWallPD - implements the follow right wall behavior using bang bang, P, and PD control respectively
+  followCenter, followCenterP, followCenterPD - implements the follow hallway behavior using bang bang, P, and PD control respectively
+  outsideCornerLeft, outsideCornerRight, insideCorner - blocking functions used in each state machine to maneuver the corners
+  hallwayEnd - blocking function used in each state machine to turn around at the end of the hallways
+  
   Hardware Connections:
   digital pin 13 - enable LED on microcontroller
   digital pin 48 - enable PIN on A4988 Stepper Motor Driver StepSTICK
@@ -312,10 +305,9 @@ const double kd_center = 200;          // The derivative control gain for center
 double force[2];
 void loop()
 {
-//  //Every 100 milliseconds, poll the IR sensors 
+  //Every 100 milliseconds, run the state machine
   int temp = millis() - last_read;
   if(temp > 100){
-//    followLeftWallPD(getLinearizedDistance(LEFT_SONAR));
 //    proportionalControlStateMachine();
 //    bangBangStateMachine();
     PDControlStateMachine();
@@ -328,6 +320,15 @@ void loop()
 
 }
 
+/*
+ * bangBangStateMachine()
+ * 
+ * This function handles the state machine for bang bang wall following 
+ * with random wander and obstacle avoidance.  It uses a state variable 
+ * with several #define'd states in order to keep track of which state 
+ * it is currently in.  It uses conditional statements to move from 
+ * state to state depending on the results from the distance sensors.  
+ */
 void bangBangStateMachine() {
   double leftSonarDist = getLinearizedDistance(LEFT_SONAR);
   double rightSonarDist = getLinearizedDistance(RIGHT_SONAR);
@@ -347,7 +348,6 @@ void bangBangStateMachine() {
     }
     break;
   case LEFT_WALL:
-//    digitalWrite(ylwLED, HIGH);
     followLeftWall(leftSonarDist);
     if (rightSonarDist <= WALL_DETECT_DIST) {
       state = BOTH_WALLS;
@@ -357,10 +357,8 @@ void bangBangStateMachine() {
       digitalWrite(grnLED, HIGH);
       state = INSIDE_CORNER;
     }
-//    digitalWrite(ylwLED, LOW);
     break;
   case RIGHT_WALL:
-//  digitalWrite(redLED, HIGH);
     followRightWall(rightSonarDist);
     if (leftSonarDist <= WALL_DETECT_DIST) {
       state = BOTH_WALLS;
@@ -370,10 +368,8 @@ void bangBangStateMachine() {
       digitalWrite(grnLED, HIGH);
       state = INSIDE_CORNER;
     }
-//    digitalWrite(redLED, LOW);
     break;
   case BOTH_WALLS:
-//  digitalWrite(grnLED, HIGH);
     followCenter(leftSonarDist, rightSonarDist);
     if (leftSonarDist > WALL_DETECT_DIST && rightSonarDist > WALL_DETECT_DIST) {
       state = RANDOM_WANDER;
@@ -384,7 +380,6 @@ void bangBangStateMachine() {
     } else if (frontIRDist <= IR_WALL_DETECT_DIST) {
       state = HALLWAY_END;
     }
-//    digitalWrite(grnLED, LOW);
     break;
   case INSIDE_CORNER:
     insideCorner(leftSonarDist, rightSonarDist, frontIRDist); 
@@ -426,6 +421,13 @@ void bangBangStateMachine() {
   }
 }
 
+/*
+ * proportionalControlStateMachine()
+ * 
+ * This function handles the state machine for P wall following with
+ * random wander and obstacle avoidance. It is very similar to 
+ * bangBangStateMachine()
+ */
 void proportionalControlStateMachine() {
   double leftSonarDist = getLinearizedDistance(LEFT_SONAR);
   double rightSonarDist = getLinearizedDistance(RIGHT_SONAR);
@@ -445,7 +447,6 @@ void proportionalControlStateMachine() {
     }
     break;
   case LEFT_WALL:
-//    digitalWrite(ylwLED, HIGH);
     followLeftWallP(leftSonarDist);
     if (rightSonarDist <= WALL_DETECT_DIST) {
       state = BOTH_WALLS;
@@ -455,10 +456,8 @@ void proportionalControlStateMachine() {
       digitalWrite(grnLED, HIGH);
       state = INSIDE_CORNER;
     }
-//    digitalWrite(ylwLED, LOW);
     break;
   case RIGHT_WALL:
-//  digitalWrite(redLED, HIGH);
     followRightWallP(rightSonarDist);
     if (leftSonarDist <= WALL_DETECT_DIST) {
       state = BOTH_WALLS;
@@ -468,10 +467,8 @@ void proportionalControlStateMachine() {
       digitalWrite(grnLED, HIGH);
       state = INSIDE_CORNER;
     }
-//    digitalWrite(redLED, LOW);
     break;
   case BOTH_WALLS:
-//  digitalWrite(grnLED, HIGH);
     followCenterP(leftSonarDist, rightSonarDist);
     if (leftSonarDist > WALL_DETECT_DIST && rightSonarDist > WALL_DETECT_DIST) {
       state = RANDOM_WANDER;
@@ -482,7 +479,6 @@ void proportionalControlStateMachine() {
     } else if (frontIRDist <= IR_WALL_DETECT_DIST) {
       state = HALLWAY_END;
     }
-//    digitalWrite(grnLED, LOW);
     break;
   case INSIDE_CORNER:
     insideCorner(leftSonarDist, rightSonarDist, frontIRDist); 
@@ -524,28 +520,16 @@ void proportionalControlStateMachine() {
   }
 }
 
-/* followLeftWall(double dist)
- *  This function uses the distance from the left sonar to set the speeds of
- *  the right and left wheels to exhibit bang bang control when a left wall is
- *  present
- */
-void followLeftWall(double dist) {
-  if (dist > FOLLOW_DISTANCE_HIGH) {
-    digitalWrite(redLED, HIGH);
-    digitalWrite(ylwLED, LOW);
-    setSpeeds(leftWheelSpeed - SPEED_DIFF, rightWheelSpeed + SPEED_DIFF);
-  } else if (dist < FOLLOW_DISTANCE_LOW){
-    digitalWrite(ylwLED, HIGH);
-    digitalWrite(redLED, LOW);
-    setSpeeds(leftWheelSpeed + SPEED_DIFF, rightWheelSpeed - SPEED_DIFF);
-  } else {
-    setSpeeds(leftWheelSpeed, rightWheelSpeed);
-    digitalWrite(redLED, LOW);
-    digitalWrite(ylwLED, LOW);
-  }
-}
+
 
 bool fromRandomW = false;
+/*
+ * PDControlStateMachine()
+ * 
+ * This function handles the state machine for PD wall following with
+ * random wander and obstacle avoidance.  It is very similar to 
+ * proportionalControlStateMachine()
+ */
 void PDControlStateMachine() {
   double leftSonarDist = getLinearizedDistance(LEFT_SONAR);
   double rightSonarDist = getLinearizedDistance(RIGHT_SONAR);
@@ -581,6 +565,7 @@ void PDControlStateMachine() {
       fromRandomW = false;
       break;
     }
+    
     if (rightSonarDist <= WALL_DETECT_DIST) {
       state = BOTH_WALLS;
       digitalWrite(ylwLED,LOW);
@@ -594,7 +579,6 @@ void PDControlStateMachine() {
       digitalWrite(grnLED,LOW);
       state = INSIDE_CORNER;
     }
-//    digitalWrite(ylwLED, LOW);
     break;
   case RIGHT_WALL:
     digitalWrite(redLED,HIGH);
@@ -619,7 +603,6 @@ void PDControlStateMachine() {
       digitalWrite(redLED,LOW);
       digitalWrite(ylwLED,LOW);
     }
-//    digitalWrite(redLED, LOW);
     break;
   case BOTH_WALLS:
     digitalWrite(redLED,HIGH);
@@ -647,7 +630,6 @@ void PDControlStateMachine() {
       digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
     }
-//    digitalWrite(grnLED, LOW);
     break;
   case INSIDE_CORNER:
     insideCorner(leftSonarDist, rightSonarDist, frontIRDist); 
@@ -693,6 +675,27 @@ void PDControlStateMachine() {
   }
 }
 
+/* followLeftWall(double dist)
+ *  This function uses the distance from the left sonar to set the speeds of
+ *  the right and left wheels to exhibit bang bang control when a left wall is
+ *  present
+ */
+void followLeftWall(double dist) {
+  if (dist > FOLLOW_DISTANCE_HIGH) {
+    digitalWrite(redLED, HIGH);
+    digitalWrite(ylwLED, LOW);
+    setSpeeds(leftWheelSpeed - SPEED_DIFF, rightWheelSpeed + SPEED_DIFF);
+  } else if (dist < FOLLOW_DISTANCE_LOW){
+    digitalWrite(ylwLED, HIGH);
+    digitalWrite(redLED, LOW);
+    setSpeeds(leftWheelSpeed + SPEED_DIFF, rightWheelSpeed - SPEED_DIFF);
+  } else {
+    setSpeeds(leftWheelSpeed, rightWheelSpeed);
+    digitalWrite(redLED, LOW);
+    digitalWrite(ylwLED, LOW);
+  }
+}
+
 /* followLeftWallP(double dist)
  *  This function uses the distance from the left sonar find the error from the 
  *  setpoint. The speeds of the right and left wheels are then set based on the
@@ -711,7 +714,7 @@ double pastErrorLeft = 0.0;
 /* followLeftWallPD(double dist)
  *  This function uses the distance from the left sonar find the error from the 
  *  setpoint. The speeds of the right and left wheels are then set based on the
- *  calculated error and set proportional control gain to exhibit proportional 
+ *  calculated error, proportional gain, and derivative gain to exhibit PD 
  *  control when a left wall is present
  */
 void followLeftWallPD(double dist) {
@@ -763,7 +766,7 @@ double pastErrorRight = 0.0;
 /* followRightWallPD(double dist)
  *  This function uses the distance from the right sonar find the error from the 
  *  setpoint. The speeds of the right and left wheels are then set based on the
- *  calculated error and set proportional control gain to exhibit proportional 
+ *  calculated error, proportional gain, and derivative gain to exhibit PD 
  *  control when a right wall is present
  */
 void followRightWallPD(double dist) {
@@ -810,7 +813,7 @@ double pastErrorCenter = 0.0;
 /* followCenterPD(double dist)
  *  This function uses the differance between the right and left sonar distances 
  *  to find the error. The speeds of the right and left wheels are then set based 
- *  on the calculated error and set proportional control gain to exhibit proportional 
+ *  on the calculated error, proportional gain, and derivative gain to exhibit PD 
  *  control when the right and left walls are present
  */
 void followCenterPD(double leftDist, double rightDist) {
@@ -823,6 +826,14 @@ void followCenterPD(double leftDist, double rightDist) {
   pastErrorCenter = error;
 }
 
+/*
+ * insideCorner(leftSonarDist, rightSonarDist, frontIRDist)
+ * 
+ * Using the left, right, and front distances from the sensors, this function chooses to execute a
+ * left or right inside corner.  It first reverses the robot to make room for a 90 degree pivot in
+ * the left or right direction.  It chooses to turn left or right based on which wall (left or right)
+ * is clsoer
+ */
 void insideCorner(double leftSonarDist, double rightSonarDist, double frontIRDist) {
   if (frontIRDist > IR_WALL_DETECT_DIST - 1) {
     reverse(ROBOT_WIDTH - frontIRDist);
@@ -835,18 +846,37 @@ void insideCorner(double leftSonarDist, double rightSonarDist, double frontIRDis
   }
 }
 
+/*
+ * outsideCornerLeft()
+ * 
+ * This function maneuvers the robot to turn around an outside left corner.
+ */
 void outsideCornerLeft() {
   forward(ROBOT_LENGTH / 4);
   pivot(COUNTERCLOCKWISE, 90);
   forward(ROBOT_LENGTH / 2);
 }
 
+/*
+ * outsideCornerRight()
+ * 
+ * This function maneuvers the robot to turn around an outside right corner.
+ */
 void outsideCornerRight() {
   forward(ROBOT_LENGTH / 4);
   pivot(CLOCKWISE, 90);
   forward(ROBOT_LENGTH / 2);
 }
 
+/*
+ * hallwayEnd(frontIRDist)
+ * 
+ * This function backs the robot up and spins 180 degrees to turn around at the end of a hallway.
+ * The frontIRDist is used to calculate how much the robot needs to reverese before executing the
+ * spin
+ * 
+ * BLOCKING FUNCTION
+ */
 void hallwayEnd(double frontIRDist) {
   reverse(ROBOT_LENGTH - frontIRDist);
   spin(CLOCKWISE, 180);
@@ -1036,42 +1066,6 @@ double getLinearizedDistance(int sensor){
 }
 
 /*
-  calibrate(left, right, clockwise)
-
-  This function increments each stepper until one encoder tick has been seen.
-  This helps calibrate the encoders before using them for movement
-
-  BLOCKING FUNCTION
-*/
-void calibrate(bool moveLeft, bool moveRight, bool clockwise) {
-  if(moveLeft){
-    // Calibrate left encoder
-    if(clockwise){
-      setSpeeds(readySpeed, 0);
-    } else{
-      setSpeeds(-readySpeed, 0);
-    }
-    encoder[LEFT] = 0;
-    while(encoder[LEFT] <= 1) {    
-      stepperLeft.runSpeed();
-    }
-  }
-
-  if(moveRight){
-    // Calibrate right encoder
-    if(clockwise){
-      setSpeeds(0, readySpeed);
-    } else{
-      setSpeeds(0, -readySpeed);
-    }
-    encoder[RIGHT] = 0;
-    while(encoder[RIGHT] <= 1) {    
-      stepperRight.runSpeed();
-    }
-  }
-}
-
-/*
  * pivot(clockwise, degrees)
  * 
  * This function takes in a boolean for clockwise or counterclockwise and then
@@ -1163,36 +1157,6 @@ void turn(boolean clockwise, double dgrees, double radius) {
   runSpeedToActualPosition(); // Blocks until all are in position
 }
 
-void turnSpeed2(boolean clockwise, double dgrees, double radius) {
-  stepperLeft.setCurrentPosition(0);
-  stepperRight.setCurrentPosition(0);
-  
-  int rightSteps;
-  int leftSteps;
-  
-  if(clockwise){
-    leftSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius+spinWheelDist/2.0)));
-    rightSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius-spinWheelDist/2.0)));
-  } else {
-    leftSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius-spinWheelDist/2.0)));
-    rightSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius+spinWheelDist/2.0)));
-  }
-
-//  stepperLeft.moveTo(leftSteps);
-//  stepperRight.moveTo(rightSteps);
-
-  //If the right wheel is the outside wheel in the turn
-  if(abs(rightSteps)>=abs(leftSteps)){
-    int insideWheelSpeed = int((double(turnSpeed)/double(abs(rightSteps)))*double(abs(leftSteps)));
-    setSpeeds(sgn(leftSteps)*insideWheelSpeed,sgn(rightSteps)*turnSpeed);
-  } else {
-    int insideWheelSpeed = int((double(turnSpeed)/double(abs(leftSteps)))*double(abs(rightSteps)));
-    setSpeeds(sgn(leftSteps)*turnSpeed,sgn(rightSteps)*insideWheelSpeed);
-  }
-
-//  runSpeedToActualPosition(); // Blocks until all are in position
-}
-
 /*
   forward(double distance)
   
@@ -1217,39 +1181,6 @@ void forward(double distance) {
   }
 
   runSpeedToActualPosition(); // Blocks until all are in position
-}
-
-/*
- * forwardEnc(distance)
- * 
- * Same as the forward() function but  it uses the encoder ticks rather than 
- * stepper steps
- * 
- * BLOCKING FUNCTION
- */
-void forwardEnc(double distance) {
-  // caculate the target value based on the desired distance
-  int leftEncoderTarget = int(distance/double(distancePerTick));    
-
-  // set speeds to move forward if distance is positive
-  if(distance < 0){
-    stopRobot();
-  } else {
-    setSpeeds(fwdSpeed, fwdSpeed);
-  }
-
-  // clear accumulated ticks and left encoder ticks
-  accumTicks[LEFT] = 0;
-  encoder[LEFT] = 0;
-
-  // move steppers if desired distance has not been reached according to encoder data
-  while(accumTicks[LEFT] <= leftEncoderTarget) {    
-    stepperLeft.runSpeed(); 
-    stepperRight.runSpeed();
-    encoder[LEFT] = 0;
-  }
-
-  stopRobot();
 }
 
 /*
@@ -1284,130 +1215,6 @@ void stopRobot() {
   setSpeeds(0,0);
 }
 
-
-/*
-  moveCircle(clockwise, diameter)
-
-  This function takes in a the direction of the circle (clock or counterclockwise) and then
-  the diameter in inches.  
-
-  BLOCKING FUNCTION
-*/
-void moveCircle(boolean clockwise, double diameter) {
-  digitalWrite(redLED, HIGH);
-  turn(clockwise,360.0,diameter/2.0);
-  digitalWrite(redLED, LOW);
-}
-
-/*
-  The moveFigure8() 
-  
-  Takes the diameter in inches as the input. It uses the moveCircle() function
-  twice with 2 different direcitons to create a figure 8 with circles of the given diameter.
-
-  BLOCKING FUNCTION
-*/
-void moveFigure8(double diameter) {
-  digitalWrite(redLED, HIGH);
-  digitalWrite(ylwLED, HIGH);
-  moveCircle(true,diameter);
-  delay(1000);
-  moveCircle(false,diameter);
-  digitalWrite(redLED, LOW);
-  digitalWrite(ylwLED, LOW);
-}
-
-
-/*
-  goToAngle(angle)
-
-  This function uses the spin function to go to a specific angle in degrees, but it uses the encoders 
-  to adjust for inconsistencies after the spin happens
-
-  BLOCKING FUNCTION
-*/
-void goToAngle(double angle) {
-  digitalWrite(grnLED, HIGH);
-  encoder[RIGHT] = 0;
-  encoder[LEFT] = 0;
-
-  accumTicks[RIGHT] = 0;
-  accumTicks[LEFT] = 0;
-
-  double angleTicksGoal = (abs(angle)/360.0)*(PI*double(spinWheelDist)/double(distancePerTick));
-
-  if(angle < 0){
-    spin(false, angle);
-  } else{
-    spin(true, angle);
-  }
-
-  if(accumTicks[LEFT] > angleTicksGoal + 1) {
-    calibrate(true, false, false);
-  } else if(accumTicks[LEFT] < angleTicksGoal - 1) {
-    calibrate(true, false, true);
-  } 
-  
-  if(accumTicks[RIGHT] > angleTicksGoal + 1) {
-    calibrate(false, true, false);
-  } else if(accumTicks[RIGHT] < angleTicksGoal - 1) {
-    calibrate(false, true, true);
-  }
-  digitalWrite(grnLED, LOW);
-}
-
-/*
- * goToGoal(x,y)
- * 
- * This function takes in an x and y coordinate in inches and moves the robot to that location
- * 
- * The positive x axis is out of the front of the robot, and then the positive y axis is coming 
- * out of the left wheel
- * 
- * BLOCKING FUNCTION
-*/
-void goToGoal(int x, int y) {
-  digitalWrite(ylwLED, HIGH);
-  digitalWrite(grnLED, HIGH);
-  y = -y;
-  double rads = atan2(y,x);
-  double dgrees = rads*(180.0/3.14159265);
-  double dist = sqrt(y*y+x*x);
-  
-  goToAngle(dgrees);
-  delay(wait_time);
-  forwardEnc(dist);
-  digitalWrite(ylwLED, LOW);
-  digitalWrite(grnLED, LOW);
-}
-
-/*
-  moveSquare(sideLength)
-
-  This function moves the robot in a square shape. The sideLength is in inches. 
-  by calling the forward function
-  and the pivot function 4 times. The forward function utilizes encoders to track
-  the distance traveled by the robot
-
-  BLOCKING FUNCTION
-*/
-void moveSquare(double side) {
-  digitalWrite(redLED, HIGH);
-  digitalWrite(grnLED, HIGH);
-  digitalWrite(ylwLED, HIGH);
-  for(int i = 0; i < 4; i++) {
-    forwardEnc(side);
-    delay(500);
-    pivot(true, 90);
-    delay(500);
-  }
-  stopRobot();
-  digitalWrite(redLED, LOW);
-  digitalWrite(grnLED, LOW);
-  digitalWrite(ylwLED, LOW);
-}
-
-
 /* 
  *  setSpeeds() 
  *  
@@ -1420,88 +1227,6 @@ void setSpeeds(double left, double right) {
   stepperLeft.setSpeed(left);
   stepperRight.setSpeed(right*rightSpeedAdjustment);
 }
-
-#ifdef PS2
-/*
- * The readController() function interfaces with the PS2 Controller Reciever to
- * retrieve the most recent joystick and button values.  From these joystick and button
- * values, the speed of the left and right stepper motors are then set accordingly
- * using the AccelStepper library
- * 
- * Several buttons on the controller are also setup to run different pre-planned actions
- * like moveSquare(), and spin().  These functions are BLOCKING, so there is a chance this function
- * BLOCKS.
- * 
- * SOMETIMES BLOCKING
- */
-void readController()
-{
-  int xAxis;//x axis value
-  int yAxis;//y axis value
-
-  ps2x.read_gamepad(false, vibrate);//update ps2 controller information
-
-  if (abs(ps2x.Analog(PSS_LY) - 128) >= joystickDeadband)//if the axis is outside of the set deadband
-    yAxis = (ps2x.Analog(PSS_LY) - 128) * -1;//y axis is reversed so reverse it and make it so the center is 0
-  else
-    yAxis = 0;
-
-  if (abs(ps2x.Analog(PSS_RX) - 128) >= joystickDeadband)//if the axis is outside of the set deadband
-    xAxis = (ps2x.Analog(PSS_RX) - 128);//make it so the center is 0
-  else
-    xAxis = 0;
-
-  if (ps2x.Button(PSB_R2)) //Boost Button(Right Trigger)
-  {
-    xAxis = map(xAxis, 0, 128, 0, 110);//map axis values to drive percentage from 0 to 110%
-    yAxis = map(yAxis, 0, 128, 0, 110);
-  }
-  else//regular diving
-  {
-    xAxis = map(xAxis, 0, 128, 0, 50);//map axis values to drive percentages from 0 to 50%
-    yAxis = map(yAxis, 0, 128, 0, 50);
-  }
-
-  //convert mapped x and y axis values into left and right speed values
-  //using an arcade configuration ("driving" controlled by y axis, "turning" controlled by x axis)
-  int leftSpeed = (yAxis + xAxis)*10;
-  int rightSpeed = (yAxis - xAxis)*10;
-
-  //if robot is commanded to move forward or turn right
-  if (yAxis > 0 || xAxis > 0){
-    //drive robot forward according to speed values
-    setSpeeds(leftSpeed,rightSpeed);//set the motor speeds
-  } else if (yAxis < 0 || xAxis < 0){ //robot is commanded to move backwards or turn left
-    //drive robot in reverse according to speed values
-    setSpeeds(leftSpeed,rightSpeed);//set the motor speeds
-  } else{
-    stopRobot();
-  }
-
-  if(ps2x.ButtonPressed(PSB_TRIANGLE)){
-    spin(CLOCKWISE,360.0);
-    stopRobot();
-    delay(1000);
-  } else if(ps2x.ButtonPressed(PSB_CROSS)){
-    moveSquare(24.0);
-    stopRobot();
-    delay(1000);
-  } else if(ps2x.ButtonPressed(PSB_CIRCLE)){
-    moveCircle(CLOCKWISE,24.0);
-    stopRobot();
-    delay(1000);
-  } else if(ps2x.ButtonPressed(PSB_L2)){
-    pivot(CLOCKWISE,360.0);
-    stopRobot();
-    delay(1000);
-  } else if(ps2x.ButtonPressed(PSB_R3)){
-    stopRobot();
-    moveFigure8(12.0);
-    stopRobot();
-  }
-}
-#endif
-
 
 /* sgn(value)
  *  This function takes in a value and return the sign of the value
