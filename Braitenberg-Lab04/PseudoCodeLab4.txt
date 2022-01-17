@@ -1,0 +1,35 @@
+loop() {
+  if(50 ms has passed) {
+    readPhotoresistors();
+    
+    if(homing) {
+      pathPlanning(pathArray);
+    } else if(backTracking){
+      backTrack(pathArray);
+    } else if(photoResistorValues < threshold) {
+      PDWallFollowingStateMachine();
+    } else {
+      //Start the homing sequence
+      homing = true;
+    }
+  }
+
+  stepperLeft.runSpeed();
+  stepperRight.runSpeed();
+}
+
+pathPlanning(pathArray) {
+  //use braitenberg behaviors to set speeds
+  //record the speed to the pathArray for this 50ms increment of time
+  if(photoResistorValues > atLightThreshold) {
+    homing = false;
+    backTracking = true;
+  }
+}
+
+backTrack(pathArray){
+  //Set the opposite speed as what is in the pathArray for this 50ms increment of time
+  if(at the end of the pathArray){
+    backTracking = false;
+  }
+}
