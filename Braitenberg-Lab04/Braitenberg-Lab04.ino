@@ -90,10 +90,11 @@ const double rightSpeedAdjustment = 1;
 #define readySpeed 100            // speed for slightly adjusting wheels to calibrate encoders
 #define collideSpeed 500
 #define avoidSpeed 80
+#define calibrateSpeed 500
 #define CLOCKWISE true
 #define COUNTERCLOCKWISE false
 
-#define COLLIDE_DIST 5.0
+#define COLLIDE_DIST 4.0
 
 #define LEFT  0                     //constant for left wheel
 #define RIGHT 1                     //constant for right wheel
@@ -121,6 +122,12 @@ static inline double backIRToInches(double analog) {return (-0.6391*analog + 114
 #define RIGHT_PHOTO A1
 #define NUM_PHOTO_SAMPLES 5
 RunningMedian photoData(NUM_PHOTO_SAMPLES);
+
+int ambientLeftPhoto = 0;
+int ambientRightPhoto = 0;
+
+#define LOVE_THRESHOLD 100
+#define PHOTO_RANGE 500
 
 //Sonar Defines and Variables --------------------------------------------------------------------------------------------------
 
@@ -242,6 +249,8 @@ void setup()
   digitalWrite(STEP_EN_PIN, STEP_ENABLE);//turns on the stepper motor driver
   digitalWrite(enableLED, HIGH);//turn on enable LED
   delay(pauseTime); //always wait 5 seconds before the robot moves
+
+  calibratePhotoresistors();
 }
 
 unsigned long last_read = 0;
@@ -253,7 +262,7 @@ double leftSonarInch = 0.0;
 double leftWheelSpeed = 250.0;
 double rightWheelSpeed = 250.0;
 
-int state = 0;
+int wallState = 0;
 
 #define FOLLOW_DISTANCE_LOW 4
 #define FOLLOW_DISTANCE_HIGH 6
@@ -285,19 +294,119 @@ const double kd_center = 200;          // The derivative control gain for center
 double force[2];
 void loop()
 {
-  //Every 100 milliseconds, run the state machine
+//  //Every 100 milliseconds, run the state machine
+//  int temp = millis() - last_read;
+//  if(temp > 100){
+////    proportionalControlStateMachine();
+////    bangBangStateMachine();
+////    PDControlStateMachine();
+//    
+//    last_read = millis();
+//  }
+
+  //Every 50 milliseconds, run the braitenberg behavior
   int temp = millis() - last_read;
   if(temp > 100){
-//    proportionalControlStateMachine();
-//    bangBangStateMachine();
-    PDControlStateMachine();
+//    int leftPhoto = getPhotoresistorValue(LEFT_PHOTO);
+//    int rightPhoto = getPhotoresistorValue(RIGHT_PHOTO);
+    loveStateMachine();
+//    feelForce();
     last_read = millis();
   }
-
+  
   //Run the stepper motors at the speed they were set to in the readController() function
   stepperRight.runSpeed();
   stepperLeft.runSpeed();
 
+}
+
+//#define RANDOM_WANDER 0
+//#define AVOID 8
+#define LOVE 1
+
+int loveState = RANDOM_WANDER;
+void loveStateMachine(){
+  switch(loveState){
+    case RANDOM_WANDER:
+      digitalWrite(grnLED,HIGH);
+      randomWander();
+      if(getLinearizedDistance(FRONT_IR)<COLLIDE_DIST){
+        loveState = AVOID;
+        digitalWrite(grnLED,LOW);
+      } else if(getPhotoresistorValue(RIGHT_PHOTO)>LOVE_THRESHOLD || 
+                getPhotoresistorValue(LEFT_PHOTO)>LOVE_THRESHOLD){
+        loveState = LOVE;
+        digitalWrite(grnLED,LOW);
+      }
+      break;
+    case AVOID:
+      digitalWrite(ylwLED,HIGH);
+      reverse(8.0);
+      spin(CLOCKWISE,180.0);
+      loveState = RANDOM_WANDER;
+      digitalWrite(ylwLED,LOW);
+      break;
+    case LOVE:
+      digitalWrite(redLED,HIGH);
+      int left = getPhotoresistorValue(LEFT_PHOTO);
+      int right = getPhotoresistorValue(RIGHT_PHOTO);
+      love(left,right);
+      if(getLinearizedDistance(FRONT_IR)<COLLIDE_DIST){
+        loveState = AVOID;
+        digitalWrite(redLED,LOW);
+      } else if(left < LOVE_THRESHOLD && right < LOVE_THRESHOLD){
+        loveState = RANDOM_WANDER;
+        digitalWrite(redLED,LOW);
+      }
+      break;
+    default:
+      loveState = RANDOM_WANDER;
+      break;
+  }
+}
+
+void aggression(int left, int right){
+  setSpeeds(right,left);
+}
+
+void fear(int left, int right){
+  setSpeeds(left,right);
+}
+
+void explorer(int left, int right){
+  setSpeeds(fwdSpeed-right,fwdSpeed-left);
+}
+
+void love(int left, int right){
+  setSpeeds(fwdSpeed-left,fwdSpeed-right);
+}
+
+/*
+ * calibratePhotoresistors()
+ * 
+ * BLOCKING FUNCTION
+ */
+void calibratePhotoresistors(){
+  //Find the # of ticks to spin in a full circle
+  int steps = int(360*spinDegreesToSteps);
+  stepperLeft.setCurrentPosition(0);
+  stepperRight.setCurrentPosition(0);
+
+  //Spin clockwise
+  setSpeeds(calibrateSpeed,-calibrateSpeed);
+  
+  while(stepperLeft.currentPosition()<steps){
+    stepperRight.runSpeed();
+    stepperLeft.runSpeed();
+    if(stepperLeft.currentPosition()%100 == 0){
+      int right = analogRead(RIGHT_PHOTO);
+      int left = analogRead(LEFT_PHOTO);
+      if(right>ambientRightPhoto) ambientRightPhoto = right;
+      if(left>ambientLeftPhoto) ambientLeftPhoto = left;
+    }
+  }
+  Serial.print("Right: ");Serial.println(ambientRightPhoto);
+  Serial.print("Left: ");Serial.println(ambientLeftPhoto);
 }
 
 bool fromRandomW = false;
@@ -313,23 +422,23 @@ void PDControlStateMachine() {
   double rightSonarDist = getLinearizedDistance(RIGHT_SONAR);
   double frontIRDist = getLinearizedDistance(FRONT_IR);
   double backIRDist = getLinearizedDistance(BACK_IR);
-  switch (state) {
+  switch (wallState) {
   case RANDOM_WANDER:
     digitalWrite(grnLED,HIGH);
     randomWander();
     if (leftSonarDist <= WALL_DETECT_DIST && rightSonarDist <= WALL_DETECT_DIST) {
-      state = BOTH_WALLS;
+      wallState = BOTH_WALLS;
       digitalWrite(grnLED,LOW);
     } else if (leftSonarDist <= WALL_DETECT_DIST) {
-      state = LEFT_WALL;
+      wallState = LEFT_WALL;
       fromRandomW = true;
       digitalWrite(grnLED,LOW);
     } else if (rightSonarDist <= WALL_DETECT_DIST) {
-      state = RIGHT_WALL;
+      wallState = RIGHT_WALL;
       fromRandomW = true;
       digitalWrite(grnLED,LOW);
     } else if (frontIRDist <= IR_WALL_DETECT_DIST || backIRDist <= IR_WALL_DETECT_DIST) {
-      state = AVOID;
+      wallState = AVOID;
       digitalWrite(grnLED,LOW);
     }
     break;
@@ -345,17 +454,17 @@ void PDControlStateMachine() {
     }
     
     if (rightSonarDist <= WALL_DETECT_DIST) {
-      state = BOTH_WALLS;
+      wallState = BOTH_WALLS;
       digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
     } else if (leftSonarDist > WALL_DETECT_DIST) {
-      state = OUTSIDE_CORNER_LEFT;
+      wallState = OUTSIDE_CORNER_LEFT;
       digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
     } else if (frontIRDist <= IR_WALL_DETECT_DIST) {
       digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
-      state = INSIDE_CORNER;
+      wallState = INSIDE_CORNER;
     }
     break;
   case RIGHT_WALL:
@@ -369,15 +478,15 @@ void PDControlStateMachine() {
       break;
     }
     if (leftSonarDist <= WALL_DETECT_DIST) {
-      state = BOTH_WALLS;
+      wallState = BOTH_WALLS;
       digitalWrite(redLED,LOW);
       digitalWrite(ylwLED,LOW);
     } else if (rightSonarDist > WALL_DETECT_DIST) {
-      state = OUTSIDE_CORNER_RIGHT;
+      wallState = OUTSIDE_CORNER_RIGHT;
       digitalWrite(redLED,LOW);
       digitalWrite(ylwLED,LOW);
     } else if (frontIRDist <= IR_WALL_DETECT_DIST) {
-      state = INSIDE_CORNER;
+      wallState = INSIDE_CORNER;
       digitalWrite(redLED,LOW);
       digitalWrite(ylwLED,LOW);
     }
@@ -388,22 +497,22 @@ void PDControlStateMachine() {
     digitalWrite(grnLED,HIGH);
     followCenterPD(leftSonarDist, rightSonarDist);
     if (leftSonarDist > WALL_DETECT_DIST && rightSonarDist > WALL_DETECT_DIST) {
-      state = RANDOM_WANDER;
+      wallState = RANDOM_WANDER;
       digitalWrite(redLED,LOW);
       digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
     } else if (rightSonarDist > WALL_DETECT_DIST) {
-      state = LEFT_WALL;
+      wallState = LEFT_WALL;
       digitalWrite(redLED,LOW);
       digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
     } else if (leftSonarDist > WALL_DETECT_DIST) {
-      state = RIGHT_WALL;
+      wallState = RIGHT_WALL;
       digitalWrite(redLED,LOW);
       digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
     } else if (frontIRDist <= IR_WALL_DETECT_DIST) {
-      state = HALLWAY_END;
+      wallState = HALLWAY_END;
       digitalWrite(redLED,LOW);
       digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
@@ -412,43 +521,43 @@ void PDControlStateMachine() {
   case INSIDE_CORNER:
     insideCorner(leftSonarDist, rightSonarDist, frontIRDist); 
       if (leftSonarDist > rightSonarDist) {
-        state = RIGHT_WALL;
+        wallState = RIGHT_WALL;
       } else {
-        state = LEFT_WALL;
+        wallState = LEFT_WALL;
       }
     break;
   case OUTSIDE_CORNER_LEFT:
     outsideCornerLeft();
     leftSonarDist = getLinearizedDistance(LEFT_SONAR);
     if (leftSonarDist <= WALL_DETECT_DIST) {
-      state = LEFT_WALL;
+      wallState = LEFT_WALL;
     } else {
-      state = RANDOM_WANDER;
+      wallState = RANDOM_WANDER;
     }
     break;
   case OUTSIDE_CORNER_RIGHT:
     outsideCornerRight();
     rightSonarDist = getLinearizedDistance(RIGHT_SONAR);
     if (rightSonarDist <= WALL_DETECT_DIST) {
-      state = RIGHT_WALL;
+      wallState = RIGHT_WALL;
     } else {
-      state = RANDOM_WANDER;
+      wallState = RANDOM_WANDER;
     }
     break;
   case HALLWAY_END:
     digitalWrite(redLED,HIGH);
     digitalWrite(grnLED,HIGH);
     hallwayEnd(frontIRDist);
-    state = BOTH_WALLS;
+    wallState = BOTH_WALLS;
     digitalWrite(redLED,LOW);
     digitalWrite(grnLED,LOW);
     break; 
   case AVOID:
     runAway();
-    state = RANDOM_WANDER;
+    wallState = RANDOM_WANDER;
     break;
   default:
-    state = RANDOM_WANDER;
+    wallState = RANDOM_WANDER;
     break;
   }
 }
@@ -602,11 +711,11 @@ void feelForce() {
 
   force[1] = sqrt(xForce*xForce+yForce*yForce);
   force[0] = atan2(yForce,xForce);
-//  Serial.println("---------------------------------------------------------------------------");
-//  Serial.print("Front: ");Serial.print(frontDist);Serial.print("   Right: ");Serial.print(rightDist);
-//  Serial.print("Back: ");Serial.print(backDist);Serial.print("   Left: ");Serial.println(leftDist);
-//  Serial.print("YForce: ");Serial.print(yForce);Serial.print("   XForce: ");Serial.println(xForce);
-//  Serial.print("Angle: ");Serial.print(force[0]);
+  Serial.println("---------------------------------------------------------------------------");
+  Serial.print("Front: ");Serial.print(frontDist);Serial.print("   Right: ");Serial.print(rightDist);
+  Serial.print("Back: ");Serial.print(backDist);Serial.print("   Left: ");Serial.println(leftDist);
+  Serial.print("YForce: ");Serial.print(yForce);Serial.print("   XForce: ");Serial.println(xForce);
+  Serial.print("Angle: ");Serial.print(force[0]);
 }
 
 void collide(int sensor){
@@ -626,7 +735,7 @@ boolean detectedObstacle(){
   double rightDist = getLinearizedDistance(RIGHT_IR);
   double leftDist = getLinearizedDistance(LEFT_IR);
 
-  return frontDist <= COLLIDE_DIST || backDist <= COLLIDE_DIST || leftDist <= COLLIDE_DIST || rightDist <= COLLIDE_DIST;
+  return frontDist < COLLIDE_DIST || backDist < COLLIDE_DIST || leftDist < COLLIDE_DIST || rightDist < COLLIDE_DIST;
 }
 
 void runAway(){
@@ -665,11 +774,14 @@ void runAway(){
   }
   
   while(detectedObstacle()){
-    stepperLeft.runSpeed();
-    stepperRight.runSpeed();
+    long timer1 = millis();
+    while(millis()-timer1<100){
+      stepperLeft.runSpeed();
+      stepperRight.runSpeed();
+    }
   }
-  long timer = millis();
-  while(millis()-timer<4000){
+  long timer2 = millis();
+  while(millis()-timer2<4000){
     stepperLeft.runSpeed();
     stepperRight.runSpeed();
   }
@@ -756,6 +868,33 @@ double getPhotoresistorVoltage(int sensor) {
         photoData.add(analogRead(LEFT_PHOTO));
       }
       return double(photoData.getMedian())*5.0/1023.0;
+      break;
+    default:
+      return -1;
+      break;
+  }
+}
+
+double getPhotoresistorValue(int sensor) {
+  int value = 0;
+  switch(sensor){
+    case RIGHT_PHOTO:
+      for (int i = 0; i < NUM_PHOTO_SAMPLES-1; i++) {
+        photoData.add(analogRead(RIGHT_PHOTO));
+      }
+      value = photoData.getMedian();
+      value = max(ambientRightPhoto,value) - ambientRightPhoto;
+      value = map(value,0,1023-ambientRightPhoto,0,PHOTO_RANGE);
+      return value;
+      break;
+    case LEFT_PHOTO:
+      for (int i = 0; i < NUM_PHOTO_SAMPLES-1; i++) {
+        photoData.add(analogRead(LEFT_PHOTO));
+      }
+      value = photoData.getMedian();
+      value = max(ambientLeftPhoto,value) - ambientLeftPhoto;
+      value = map(value,0,1023-ambientLeftPhoto,0,PHOTO_RANGE);
+      return value;
       break;
     default:
       return -1;
