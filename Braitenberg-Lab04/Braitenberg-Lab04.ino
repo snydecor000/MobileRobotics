@@ -304,30 +304,30 @@ const double kd_center = 200;          // The derivative control gain for center
 double force[2];
 void loop()
 {
-//  //Every 100 milliseconds, run the state machine
-//  int temp = millis() - last_read;
-//  if(temp > 100){
-////    proportionalControlStateMachine();
-////    bangBangStateMachine();
-////    PDControlStateMachine();
-//    
-//    last_read = millis();
-//  }
-
-  //Every 50 milliseconds, run the braitenberg behavior
+  //Every 100 milliseconds, run the state machine
   int temp = millis() - last_read;
-  if(temp > PHOTO_SAMPLE_MS){
-//    int leftPhoto = getPhotoresistorValue(LEFT_PHOTO);
-//    int rightPhoto = getPhotoresistorValue(RIGHT_PHOTO);
-//    loveStateMachine();
-    PDControlStateMachine();
-//    feelForce();
+  if(temp > 500){
+    double leftPhoto = getPhotoresistorVoltage(LEFT_PHOTO);
+    double rightPhoto = getPhotoresistorVoltage(RIGHT_PHOTO);
+    Serial.print("Right: ");Serial.println(rightPhoto);
+    Serial.print("Left: ");Serial.println(leftPhoto);
+    Serial.println("-----------------------------");
     last_read = millis();
   }
+
+//  //Every 50 milliseconds, run the braitenberg behavior
+//  int temp = millis() - last_read;
+//  if(temp > PHOTO_SAMPLE_MS){
+////    int leftPhoto = getPhotoresistorValue(LEFT_PHOTO);
+////    int rightPhoto = getPhotoresistorValue(RIGHT_PHOTO);
+////    loveStateMachine();
+////    PDControlStateMachine();
+//    last_read = millis();
+//  }
   
   //Run the stepper motors at the speed they were set to in the readController() function
-  stepperRight.runSpeed();
-  stepperLeft.runSpeed();
+//  stepperRight.runSpeed();
+//  stepperLeft.runSpeed();
 
 }
 
@@ -336,6 +336,12 @@ void loop()
 #define LOVE 1
 
 int loveState = RANDOM_WANDER;
+/*
+ * loveStateMachine()
+ * 
+ * This simple state machine integrates the love braitenberg behavior 
+ * with random wander and obstacle avoidance 
+ */
 void loveStateMachine(){
   switch(loveState){
     case RANDOM_WANDER:
@@ -376,6 +382,14 @@ void loveStateMachine(){
   }
 }
 
+/*
+ * aggression(left,right), fear(left,right), explorer(left,right), love(left,right)
+ * 
+ * These functions implement the 4 braitenberg vehicle behaviors by setting the speed of the motors
+ * according to the right and left photoresistor analog values.
+ * 
+ * NON-BLOCKING FUNCTIONS
+ */
 void aggression(int left, int right){
   setSpeeds(right,left);
 }
@@ -392,9 +406,15 @@ void love(int left, int right){
   setSpeeds(fwdSpeed-left,fwdSpeed-right);
 }
 
+/*
+ * homing(left, right)
+ * 
+ * This function runs the love behavior according to the left and right photoresistor value inputs, and 
+ * records the speed values so that the returning() function can put the robot back to where it was before homing
+ * 
+ * NON-BLOCKING FUNCTION
+ */
 void homing(int left, int right){
-//  int lSpeed = right;
-//  int rSpeed = left;
   int lSpeed = fwdSpeed-left;
   int rSpeed = fwdSpeed-right;
   setSpeeds(lSpeed,rSpeed);
@@ -403,6 +423,14 @@ void homing(int left, int right){
   pathIdx++;
 }
 
+/*
+ * returning()
+ * 
+ * This function plays back the speeds recorded in the homing function, reversing the speeds
+ * so that the robot goes back to where it was before the homing. 
+ * 
+ * BLOCKING FUNCTION
+ */
 long homingTime = 0;
 void returning(){
   setSpeeds(-pathLSpeeds[pathIdx],-pathRSpeeds[pathIdx]);
@@ -420,6 +448,10 @@ void returning(){
 
 /*
  * calibratePhotoresistors()
+ * 
+ * This function spins the robot in a full circle and records the max photoresistor values 
+ * for the left and right photoresistors.  These max values are used to threshold away the 
+ * ambient light in the room for the getPhotoresistorValue() function
  * 
  * BLOCKING FUNCTION
  */
@@ -479,13 +511,8 @@ void PDControlStateMachine() {
       fromRandomW = true;
       digitalWrite(grnLED,LOW);
     } 
-//    else if (frontIRDist <= IR_WALL_DETECT_DIST || backIRDist <= IR_WALL_DETECT_DIST) {
-//      wallState = AVOID;
-//      digitalWrite(grnLED,LOW);
-//    }
     break;
   case LEFT_WALL:
-//    digitalWrite(ylwLED,HIGH);
     digitalWrite(grnLED,HIGH);
     followLeftWallPD(leftSonarDist);
     
@@ -502,21 +529,17 @@ void PDControlStateMachine() {
       digitalWrite(grnLED,LOW);
     } else if (rightSonarDist <= WALL_DETECT_DIST) {
       wallState = BOTH_WALLS;
-//      digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
     } else if (leftSonarDist > WALL_DETECT_DIST) {
       wallState = OUTSIDE_CORNER_LEFT;
-//      digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
     } else if (frontIRDist <= IR_WALL_DETECT_DIST) {
-//      digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
       wallState = INSIDE_CORNER;
     }
     break;
   case RIGHT_WALL:
     digitalWrite(grnLED,HIGH);
-//    digitalWrite(ylwLED,HIGH);
     followRightWallPD(rightSonarDist);
 
     // If just coming from random, don't transition out of this state just yet
@@ -532,15 +555,12 @@ void PDControlStateMachine() {
     } else if (leftSonarDist <= WALL_DETECT_DIST) {
       wallState = BOTH_WALLS;
       digitalWrite(grnLED,LOW);
-//      digitalWrite(ylwLED,LOW);
     } else if (rightSonarDist > WALL_DETECT_DIST) {
       wallState = OUTSIDE_CORNER_RIGHT;
       digitalWrite(grnLED,LOW);
-//      digitalWrite(ylwLED,LOW);
     } else if (frontIRDist <= IR_WALL_DETECT_DIST) {
       wallState = INSIDE_CORNER;
       digitalWrite(grnLED,LOW);
-//      digitalWrite(ylwLED,LOW);
     }
     break;
   case BOTH_WALLS:
@@ -603,10 +623,6 @@ void PDControlStateMachine() {
     wallState = BOTH_WALLS;
     digitalWrite(redLED,LOW);
     digitalWrite(grnLED,LOW);
-    break; 
-  case AVOID:
-    runAway();
-    wallState = RANDOM_WANDER;
     break;
   case HOMING:
     digitalWrite(ylwLED,HIGH);
@@ -629,7 +645,7 @@ void PDControlStateMachine() {
     wallState = prevWallState;
     break;
   default:
-    while(true){digitalWrite(redLED,HIGH);digitalWrite(ylwLED,HIGH);digitalWrite(grnLED,HIGH);}
+    wallState = RANDOM_WANDER;
     break;
   }
 }
@@ -750,7 +766,6 @@ double randRSpeed = 0.0;
 long lastRandom = 0;
 
 void randomWander() {
-//  digitalWrite(grnLED,HIGH);
   if(millis() - lastRandom > 1000){
       randLSpeed = random(800);
       randRSpeed = random(800);
@@ -758,7 +773,6 @@ void randomWander() {
       lastRandom = millis();
   }
   setSpeeds(randLSpeed,randRSpeed);
-//  digitalWrite(grnLED,LOW);
 }
 
 /* 
@@ -783,11 +797,11 @@ void feelForce() {
 
   force[1] = sqrt(xForce*xForce+yForce*yForce);
   force[0] = atan2(yForce,xForce);
-  Serial.println("---------------------------------------------------------------------------");
-  Serial.print("Front: ");Serial.print(frontDist);Serial.print("   Right: ");Serial.print(rightDist);
-  Serial.print("Back: ");Serial.print(backDist);Serial.print("   Left: ");Serial.println(leftDist);
-  Serial.print("YForce: ");Serial.print(yForce);Serial.print("   XForce: ");Serial.println(xForce);
-  Serial.print("Angle: ");Serial.print(force[0]);
+//  Serial.println("---------------------------------------------------------------------------");
+//  Serial.print("Front: ");Serial.print(frontDist);Serial.print("   Right: ");Serial.print(rightDist);
+//  Serial.print("Back: ");Serial.print(backDist);Serial.print("   Left: ");Serial.println(leftDist);
+//  Serial.print("YForce: ");Serial.print(yForce);Serial.print("   XForce: ");Serial.println(xForce);
+//  Serial.print("Angle: ");Serial.print(force[0]);
 }
 
 void collide(int sensor){
@@ -988,14 +1002,12 @@ double getPhotoresistorValue(int sensor) {
  */
 void pivot(boolean clockwise, double dgrees) {
   int steps = int(dgrees*pivotDegreesToSteps);
-  stepperLeft.setCurrentPosition(0);
-  stepperRight.setCurrentPosition(0);
   
   if(clockwise){
-    stepperLeft.moveTo(steps);
+    stepperLeft.moveTo(steps+stepperLeft.currentPosition());
     setSpeeds(sgn(steps)*spinSpeed,0);
   } else {
-    stepperRight.moveTo(steps);
+    stepperRight.moveTo(steps+stepperRight.currentPosition());
     setSpeeds(0,sgn(steps)*spinSpeed);
   }
 
@@ -1013,16 +1025,14 @@ void pivot(boolean clockwise, double dgrees) {
 */
 void spin(boolean clockwise, double dgrees) {
   int steps = int(abs(dgrees)*spinDegreesToSteps);
-  stepperLeft.setCurrentPosition(0);
-  stepperRight.setCurrentPosition(0);
   
   if(clockwise){
-    stepperLeft.moveTo(steps);
-    stepperRight.moveTo(-steps);
+    stepperLeft.moveTo(steps+stepperLeft.currentPosition());
+    stepperRight.moveTo(-steps+stepperRight.currentPosition());
     setSpeeds(spinSpeed,-spinSpeed);
   } else {
-    stepperLeft.moveTo(-steps);
-    stepperRight.moveTo(steps);
+    stepperLeft.moveTo(-steps+stepperLeft.currentPosition());
+    stepperRight.moveTo(steps+stepperRight.currentPosition());
     setSpeeds(-spinSpeed,spinSpeed);
   }
   runSpeedToActualPosition(); // Blocks until all are in position
@@ -1036,10 +1046,7 @@ void spin(boolean clockwise, double dgrees) {
  * 
  * BLOCKING FUNCTION
 */
-void turn(boolean clockwise, double dgrees, double radius) {
-  stepperLeft.setCurrentPosition(0);
-  stepperRight.setCurrentPosition(0);
-  
+void turn(boolean clockwise, double dgrees, double radius) {  
   int rightSteps;
   int leftSteps;
   
@@ -1051,8 +1058,8 @@ void turn(boolean clockwise, double dgrees, double radius) {
     rightSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius+spinWheelDist/2.0)));
   }
 
-  stepperLeft.moveTo(leftSteps);
-  stepperRight.moveTo(rightSteps);
+  stepperLeft.moveTo(leftSteps+stepperLeft.currentPosition());
+  stepperRight.moveTo(rightSteps+stepperRight.currentPosition());
 
   //If the right wheel is the outside wheel in the turn
   if(abs(rightSteps)>=abs(leftSteps)){
@@ -1076,8 +1083,6 @@ void turn(boolean clockwise, double dgrees, double radius) {
   BLOCKING FUNCTION
 */
 void forward(double distance) {
-//  stepperLeft.setCurrentPosition(0);
-//  stepperRight.setCurrentPosition(0);
   
   int steps = int(distance*inchesToSteps);
   stepperLeft.moveTo(steps+stepperLeft.currentPosition());
@@ -1102,10 +1107,8 @@ void forward(double distance) {
 */
 void reverse(int distance) {
   int steps = int(distance*inchesToSteps);
-  stepperLeft.setCurrentPosition(0);
-  stepperRight.setCurrentPosition(0);
-  stepperLeft.moveTo(-steps);
-  stepperRight.moveTo(-steps);
+  stepperLeft.moveTo(-steps+stepperLeft.currentPosition());
+  stepperRight.moveTo(-steps+stepperRight.currentPosition());
   if(distance < 0){
     stopRobot();
   } else {
