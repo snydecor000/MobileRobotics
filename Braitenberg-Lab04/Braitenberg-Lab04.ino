@@ -83,7 +83,7 @@ const double rightSpeedAdjustment = 1;
 
 #define maximumSpeed 1500
 #define maxAccel 1000
-#define fwdSpeed 200
+#define fwdSpeed 300//200
 #define revSpeed 500
 #define spinSpeed 200
 #define turnSpeed 400
@@ -126,8 +126,16 @@ RunningMedian photoData(NUM_PHOTO_SAMPLES);
 int ambientLeftPhoto = 0;
 int ambientRightPhoto = 0;
 
-#define LOVE_THRESHOLD 100
-#define PHOTO_RANGE 500
+#define LOVE_THRESHOLD 40
+#define HOMING_THRESHOLD 180
+#define PHOTO_RANGE 200
+
+#define PHOTO_SAMPLE_MS 50
+#define HOMING_MAX_TIME 20000
+
+int pathLSpeeds[HOMING_MAX_TIME/PHOTO_SAMPLE_MS];
+int pathRSpeeds[HOMING_MAX_TIME/PHOTO_SAMPLE_MS];
+int pathIdx = 0;
 
 //Sonar Defines and Variables --------------------------------------------------------------------------------------------------
 
@@ -283,6 +291,8 @@ int wallState = 0;
 #define OUTSIDE_CORNER_RIGHT 6
 #define HALLWAY_END 7
 #define AVOID 8
+#define HOMING 9
+#define RETURNING 10
 
 const double kp = 50;                  // The proportional control gain for single wall following
 const double kp_center = 50;           // The proportional control gain for center following
@@ -306,10 +316,11 @@ void loop()
 
   //Every 50 milliseconds, run the braitenberg behavior
   int temp = millis() - last_read;
-  if(temp > 100){
+  if(temp > PHOTO_SAMPLE_MS){
 //    int leftPhoto = getPhotoresistorValue(LEFT_PHOTO);
 //    int rightPhoto = getPhotoresistorValue(RIGHT_PHOTO);
-    loveStateMachine();
+//    loveStateMachine();
+    PDControlStateMachine();
 //    feelForce();
     last_read = millis();
   }
@@ -381,6 +392,32 @@ void love(int left, int right){
   setSpeeds(fwdSpeed-left,fwdSpeed-right);
 }
 
+void homing(int left, int right){
+//  int lSpeed = right;
+//  int rSpeed = left;
+  int lSpeed = fwdSpeed-left;
+  int rSpeed = fwdSpeed-right;
+  setSpeeds(lSpeed,rSpeed);
+  pathLSpeeds[pathIdx] = lSpeed;
+  pathRSpeeds[pathIdx] = rSpeed;
+  pathIdx++;
+}
+
+long homingTime = 0;
+void returning(){
+  setSpeeds(-pathLSpeeds[pathIdx],-pathRSpeeds[pathIdx]);
+  while(pathIdx >= 0){
+    long temp = millis() - homingTime;
+    if(temp > PHOTO_SAMPLE_MS){
+      pathIdx--;
+      setSpeeds(-pathLSpeeds[pathIdx],-pathRSpeeds[pathIdx]);
+      homingTime = millis();
+    }
+    stepperRight.runSpeed();
+    stepperLeft.runSpeed();
+  }
+}
+
 /*
  * calibratePhotoresistors()
  * 
@@ -410,6 +447,7 @@ void calibratePhotoresistors(){
 }
 
 bool fromRandomW = false;
+int prevWallState;
 /*
  * PDControlStateMachine()
  * 
@@ -422,6 +460,9 @@ void PDControlStateMachine() {
   double rightSonarDist = getLinearizedDistance(RIGHT_SONAR);
   double frontIRDist = getLinearizedDistance(FRONT_IR);
   double backIRDist = getLinearizedDistance(BACK_IR);
+
+  int lPhoto = getPhotoresistorValue(LEFT_PHOTO);
+  int rPhoto = getPhotoresistorValue(RIGHT_PHOTO);
   switch (wallState) {
   case RANDOM_WANDER:
     digitalWrite(grnLED,HIGH);
@@ -437,13 +478,14 @@ void PDControlStateMachine() {
       wallState = RIGHT_WALL;
       fromRandomW = true;
       digitalWrite(grnLED,LOW);
-    } else if (frontIRDist <= IR_WALL_DETECT_DIST || backIRDist <= IR_WALL_DETECT_DIST) {
-      wallState = AVOID;
-      digitalWrite(grnLED,LOW);
-    }
+    } 
+//    else if (frontIRDist <= IR_WALL_DETECT_DIST || backIRDist <= IR_WALL_DETECT_DIST) {
+//      wallState = AVOID;
+//      digitalWrite(grnLED,LOW);
+//    }
     break;
   case LEFT_WALL:
-    digitalWrite(ylwLED,HIGH);
+//    digitalWrite(ylwLED,HIGH);
     digitalWrite(grnLED,HIGH);
     followLeftWallPD(leftSonarDist);
     
@@ -453,23 +495,28 @@ void PDControlStateMachine() {
       break;
     }
     
-    if (rightSonarDist <= WALL_DETECT_DIST) {
+    if(lPhoto>LOVE_THRESHOLD || rPhoto>LOVE_THRESHOLD) {
+      wallState = HOMING;
+      pathIdx = 0;
+      prevWallState = LEFT_WALL;
+      digitalWrite(grnLED,LOW);
+    } else if (rightSonarDist <= WALL_DETECT_DIST) {
       wallState = BOTH_WALLS;
-      digitalWrite(ylwLED,LOW);
+//      digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
     } else if (leftSonarDist > WALL_DETECT_DIST) {
       wallState = OUTSIDE_CORNER_LEFT;
-      digitalWrite(ylwLED,LOW);
+//      digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
     } else if (frontIRDist <= IR_WALL_DETECT_DIST) {
-      digitalWrite(ylwLED,LOW);
+//      digitalWrite(ylwLED,LOW);
       digitalWrite(grnLED,LOW);
       wallState = INSIDE_CORNER;
     }
     break;
   case RIGHT_WALL:
-    digitalWrite(redLED,HIGH);
-    digitalWrite(ylwLED,HIGH);
+    digitalWrite(grnLED,HIGH);
+//    digitalWrite(ylwLED,HIGH);
     followRightWallPD(rightSonarDist);
 
     // If just coming from random, don't transition out of this state just yet
@@ -477,18 +524,23 @@ void PDControlStateMachine() {
       fromRandomW = false;
       break;
     }
-    if (leftSonarDist <= WALL_DETECT_DIST) {
+    if(lPhoto>LOVE_THRESHOLD || rPhoto>LOVE_THRESHOLD) {
+      wallState = HOMING;
+      pathIdx = 0;
+      prevWallState = RIGHT_WALL;
+      digitalWrite(grnLED,LOW);
+    } else if (leftSonarDist <= WALL_DETECT_DIST) {
       wallState = BOTH_WALLS;
-      digitalWrite(redLED,LOW);
-      digitalWrite(ylwLED,LOW);
+      digitalWrite(grnLED,LOW);
+//      digitalWrite(ylwLED,LOW);
     } else if (rightSonarDist > WALL_DETECT_DIST) {
       wallState = OUTSIDE_CORNER_RIGHT;
-      digitalWrite(redLED,LOW);
-      digitalWrite(ylwLED,LOW);
+      digitalWrite(grnLED,LOW);
+//      digitalWrite(ylwLED,LOW);
     } else if (frontIRDist <= IR_WALL_DETECT_DIST) {
       wallState = INSIDE_CORNER;
-      digitalWrite(redLED,LOW);
-      digitalWrite(ylwLED,LOW);
+      digitalWrite(grnLED,LOW);
+//      digitalWrite(ylwLED,LOW);
     }
     break;
   case BOTH_WALLS:
@@ -556,8 +608,28 @@ void PDControlStateMachine() {
     runAway();
     wallState = RANDOM_WANDER;
     break;
+  case HOMING:
+    digitalWrite(ylwLED,HIGH);
+    homing(lPhoto,rPhoto);
+    if(lPhoto>HOMING_THRESHOLD || rPhoto>HOMING_THRESHOLD){
+      stopRobot();
+      delay(3000);
+      wallState = RETURNING;
+      digitalWrite(ylwLED,LOW);
+    } else if(pathIdx == (HOMING_MAX_TIME/PHOTO_SAMPLE_MS) - 1){
+      stopRobot();
+      delay(3000);
+      wallState = RETURNING;
+    }
+    break;
+  case RETURNING:
+    digitalWrite(redLED,HIGH);
+    returning();
+    digitalWrite(redLED,LOW);
+    wallState = prevWallState;
+    break;
   default:
-    wallState = RANDOM_WANDER;
+    while(true){digitalWrite(redLED,HIGH);digitalWrite(ylwLED,HIGH);digitalWrite(grnLED,HIGH);}
     break;
   }
 }
