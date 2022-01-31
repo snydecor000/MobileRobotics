@@ -1,21 +1,19 @@
 /************************************
-  Braitenberg-Lab03.ino
-  Jordan Asman and Cory Snyder 1.6.2022
+  Braitenberg-Lab04.ino
+  Jordan Asman and Cory Snyder 1.17.2022
 
-  This program introduces the concept of feedback control through wall following.  Using sonar and IR sensors, the robot navigates its 
-  environment and follows left and right walls (including hallways) even handling inside and outside corners.  The wall following is 
-  implemented using three different control architectures in this code.  There is Bang Bang control, P control, and PD control
-  
+  This program introduces the 4 Braitenberg Vehicle behaviors using 2 photoresistors attached to analog inputs. 
+  The love behavior is then integrated with the random wander and obstacle avoidance behaviors through a simple state machine.
+  Finally, a final state machine implements the behavior where the robot will follow a wall until it sees a light where it will home to the light and then dock.
+  After that, the robot will return to the wall in the position it was before the homing, and continue to wall following.
 
   The primary functions created are:
-  bangBangStateMachine - handles the state machine for the bang bang wall following functions
-  proportionalControlStateMachine - handles the state machine for the proportional wall following functions
-  PDControlStateMachine - handles the state machine for the PD wall following functions
-  followLeftWall, followLeftWallP, followLeftWallPD - implements the follow left wall behavior using bang bang, P, and PD control respectively
-  followRightWall, followRightWallP, followRightWallPD - implements the follow right wall behavior using bang bang, P, and PD control respectively
-  followCenter, followCenterP, followCenterPD - implements the follow hallway behavior using bang bang, P, and PD control respectively
-  outsideCornerLeft, outsideCornerRight, insideCorner - blocking functions used in each state machine to maneuver the corners
-  hallwayEnd - blocking function used in each state machine to turn around at the end of the hallways
+  calibratePhotoresistors - This function is run at the end of setup.  It spins the robot in a circle and records the ambient lighting conditions
+  love, explorer, agression, fear - These 4 functions set the speed of the left and right steppers based on the photoresistors to implement the corresponding Braitenberg behavior
+  loveStateMachine - This function implements the love Braitenberg behavior with obstacle avoidance and random wander
+  homing - This function runs the love behavior to move towards the light.  It also keeps track of its left and right wheel speeds each iteration and saves it to arrays for playback
+  returning - This function takes the speeds recorded in the homing function and feeds them back to the motors in reverse order.  This causes the robot to backtrack on its homing path.
+  HomingStateMachine - This function combines the homing and returning behaviors with the PD wall following from Lab03
   
   Hardware Connections:
   digital pin 13 - enable LED on microcontroller
@@ -132,7 +130,6 @@ int ambientRightPhoto = 0;
 
 #define PHOTO_SAMPLE_MS 50
 #define HOMING_MAX_TIME 20000
-
 int pathLSpeeds[HOMING_MAX_TIME/PHOTO_SAMPLE_MS];
 int pathRSpeeds[HOMING_MAX_TIME/PHOTO_SAMPLE_MS];
 int pathIdx = 0;
@@ -261,11 +258,7 @@ void setup()
   calibratePhotoresistors();
 }
 
-unsigned long last_read = 0;
-double robotHeading = 0.0;
-double goalX = 0.0;
-double goalY = -48.0;
-double leftSonarInch = 0.0;
+// Wall Follow Consts and Defines ----------------------------------------------------------------------------------------------
 
 double leftWheelSpeed = 250.0;
 double rightWheelSpeed = 250.0;
@@ -299,35 +292,32 @@ const double kp_center = 50;           // The proportional control gain for cent
 const double kd = 200;                 // The derivative control gain for single wall following
 const double kd_center = 200;          // The derivative control gain for center following
 
-
-// Global force variable.  Gets updated by the feelForce() function every 100 ms
-double force[2];
+// Loop ------------------------------------------------------------------------------------------------------------------------
+unsigned long last_read = 0;
 void loop()
 {
-  //Every 100 milliseconds, run the state machine
-  int temp = millis() - last_read;
-  if(temp > 500){
-    double leftPhoto = getPhotoresistorVoltage(LEFT_PHOTO);
-    double rightPhoto = getPhotoresistorVoltage(RIGHT_PHOTO);
-    Serial.print("Right: ");Serial.println(rightPhoto);
-    Serial.print("Left: ");Serial.println(leftPhoto);
-    Serial.println("-----------------------------");
-    last_read = millis();
-  }
-
-//  //Every 50 milliseconds, run the braitenberg behavior
+//  //Every 100 milliseconds, print the photoresistor values
 //  int temp = millis() - last_read;
-//  if(temp > PHOTO_SAMPLE_MS){
-////    int leftPhoto = getPhotoresistorValue(LEFT_PHOTO);
-////    int rightPhoto = getPhotoresistorValue(RIGHT_PHOTO);
-////    loveStateMachine();
-////    PDControlStateMachine();
+//  if(temp > 500){
+//    double leftPhoto = getPhotoresistorVoltage(LEFT_PHOTO);
+//    double rightPhoto = getPhotoresistorVoltage(RIGHT_PHOTO);
+//    Serial.print("Right: ");Serial.println(rightPhoto);
+//    Serial.print("Left: ");Serial.println(leftPhoto);
+//    Serial.println("-----------------------------");
 //    last_read = millis();
 //  }
+
+  //Every 50 milliseconds, run the state machine
+  int temp = millis() - last_read;
+  if(temp > PHOTO_SAMPLE_MS){
+//    loveStateMachine();
+    HomingStateMachine();
+    last_read = millis();
+  }
   
-  //Run the stepper motors at the speed they were set to in the readController() function
-//  stepperRight.runSpeed();
-//  stepperLeft.runSpeed();
+  //Run the stepper motors at the speed they were set
+  stepperRight.runSpeed();
+  stepperLeft.runSpeed();
 
 }
 
@@ -481,13 +471,15 @@ void calibratePhotoresistors(){
 bool fromRandomW = false;
 int prevWallState;
 /*
- * PDControlStateMachine()
+ * HomingStateMachine()
  * 
- * This function handles the state machine for PD wall following with
- * random wander and obstacle avoidance.  It is very similar to 
- * proportionalControlStateMachine()
+ * This function combines the PD wall following from Lab03 with homing, random wander, 
+ * and obstacle avoidance
+ * 
+ * This function uses the homing and returning functions to implement the love based 
+ * homing and backtracking behaviors
  */
-void PDControlStateMachine() {
+void HomingStateMachine() {
   double leftSonarDist = getLinearizedDistance(LEFT_SONAR);
   double rightSonarDist = getLinearizedDistance(RIGHT_SONAR);
   double frontIRDist = getLinearizedDistance(FRONT_IR);
@@ -775,46 +767,9 @@ void randomWander() {
   setSpeeds(randLSpeed,randRSpeed);
 }
 
-/* 
- * feelForce()
- * 
- * This function reads the 4 IR sensors and returns the [angle,magnitude] of the force that the robot feels
+/* detectedObstacle()
+ *  This function returns true if there is an object detected by the 4 IR sensors within the COLLIDE_DIST
  */
-void feelForce() {
-  double frontDist = getLinearizedDistance(FRONT_IR);
-  double backDist = getLinearizedDistance(BACK_IR);
-  double rightDist = getLinearizedDistance(RIGHT_IR);
-  double leftDist = getLinearizedDistance(LEFT_IR);
-  double xForce = 0.0;
-  double yForce = 0.0;
-  // The front IR feels forces that push in the negative x direction
-  // The back IR feels forces that push in the positive x direction
-  xForce += -1*(12.0 - frontDist) + (12.0 - backDist);
-  // The left IR feels forces that push in the negative y direction
-  // The right IR feels forces that push in the positive y direction
-  yForce += -1*(12.0 - leftDist) + (12.0 - rightDist);
-
-
-  force[1] = sqrt(xForce*xForce+yForce*yForce);
-  force[0] = atan2(yForce,xForce);
-//  Serial.println("---------------------------------------------------------------------------");
-//  Serial.print("Front: ");Serial.print(frontDist);Serial.print("   Right: ");Serial.print(rightDist);
-//  Serial.print("Back: ");Serial.print(backDist);Serial.print("   Left: ");Serial.println(leftDist);
-//  Serial.print("YForce: ");Serial.print(yForce);Serial.print("   XForce: ");Serial.println(xForce);
-//  Serial.print("Angle: ");Serial.print(force[0]);
-}
-
-void collide(int sensor){
-  digitalWrite(redLED, HIGH);
-  setSpeeds(collideSpeed,collideSpeed);
-  while(getLinearizedDistance(sensor) > COLLIDE_DIST){
-    stepperLeft.runSpeed();
-    stepperRight.runSpeed();
-  }
-  stopRobot();
-  digitalWrite(redLED, LOW);
-}
-
 boolean detectedObstacle(){
   double frontDist = getLinearizedDistance(FRONT_IR);
   double backDist = getLinearizedDistance(BACK_IR);
@@ -824,6 +779,9 @@ boolean detectedObstacle(){
   return frontDist < COLLIDE_DIST || backDist < COLLIDE_DIST || leftDist < COLLIDE_DIST || rightDist < COLLIDE_DIST;
 }
 
+/* runAway()
+ *  This function uses the 4 IR sensors to move away from any obstacle that is detected
+ */
 void runAway(){
   double frontDist = getLinearizedDistance(FRONT_IR);
   double backDist = getLinearizedDistance(BACK_IR);
@@ -941,6 +899,11 @@ double getLinearizedDistance(int sensor){
   }
 }
 
+/* getPhotoresistorVoltage(sensor)
+ *  This function return a double containing the voltage of the given photoresistor.
+ *  The voltage is found using a median of 5 analog reads with a conversion
+ *  If the given photoresistor is not valid, -1 is returned.
+ */
 double getPhotoresistorVoltage(int sensor) {
   switch(sensor){
     case RIGHT_PHOTO:
@@ -961,6 +924,13 @@ double getPhotoresistorVoltage(int sensor) {
   }
 }
 
+/* getPhotoresistorValue(sensor)
+ *  This function returns an integer value for the given photoresistor from 0 to PHOTO_RANGE
+ *  Depending on the ambient light condidtions found through the calibratePhotoresistors function,
+ *  this function will compensate and return proportional values.
+ *  
+ *  -1 is returned if the given sensor isn't valid
+ */
 double getPhotoresistorValue(int sensor) {
   int value = 0;
   switch(sensor){
@@ -1035,41 +1005,6 @@ void spin(boolean clockwise, double dgrees) {
     stepperRight.moveTo(steps+stepperRight.currentPosition());
     setSpeeds(-spinSpeed,spinSpeed);
   }
-  runSpeedToActualPosition(); // Blocks until all are in position
-}
-
-/*
- * turn(clockwise, degrees, radius)
- * 
- * This function takes in a boolean for clockwise or counterclockwise, the radius of the arc/turn in 
- * inches, and then a number of degrees that the robot is going to drive around the arc/turn. 
- * 
- * BLOCKING FUNCTION
-*/
-void turn(boolean clockwise, double dgrees, double radius) {  
-  int rightSteps;
-  int leftSteps;
-  
-  if(clockwise){
-    leftSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius+spinWheelDist/2.0)));
-    rightSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius-spinWheelDist/2.0)));
-  } else {
-    leftSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius-spinWheelDist/2.0)));
-    rightSteps = int(inchesToSteps*((dgrees/360.0)*2.0*PI*(radius+spinWheelDist/2.0)));
-  }
-
-  stepperLeft.moveTo(leftSteps+stepperLeft.currentPosition());
-  stepperRight.moveTo(rightSteps+stepperRight.currentPosition());
-
-  //If the right wheel is the outside wheel in the turn
-  if(abs(rightSteps)>=abs(leftSteps)){
-    int insideWheelSpeed = int((double(turnSpeed)/double(abs(rightSteps)))*double(abs(leftSteps)));
-    setSpeeds(sgn(leftSteps)*insideWheelSpeed,sgn(rightSteps)*turnSpeed);
-  } else {
-    int insideWheelSpeed = int((double(turnSpeed)/double(abs(leftSteps)))*double(abs(rightSteps)));
-    setSpeeds(sgn(leftSteps)*turnSpeed,sgn(rightSteps)*insideWheelSpeed);
-  }
-
   runSpeedToActualPosition(); // Blocks until all are in position
 }
 
@@ -1223,17 +1158,5 @@ void runToStop ( void ) {
     if (rightStopped && leftStopped) {
       runNow = 0;
     }
-  }
-}
-
-/*function to run both wheels to a position at speed*/
-void runAtSpeedToPosition() {
-  stepperRight.runSpeedToPosition();
-  stepperLeft.runSpeedToPosition();
-}
-
-/*function to run both wheels continuously at a speed*/
-void runAtSpeed ( void ) {
-  while (stepperRight.runSpeed() || stepperLeft.runSpeed()) {
   }
 }
