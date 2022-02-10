@@ -1,19 +1,8 @@
 /************************************
   Braitenberg-FinalProject.ino
-  Jordan Asman and Cory Snyder 1.17.2022
+  Jordan Asman and Cory Snyder 2.3.2022
 
-  This program introduces the 4 Braitenberg Vehicle behaviors using 2 photoresistors attached to analog inputs. 
-  The love behavior is then integrated with the random wander and obstacle avoidance behaviors through a simple state machine.
-  Finally, a final state machine implements the behavior where the robot will follow a wall until it sees a light where it will home to the light and then dock.
-  After that, the robot will return to the wall in the position it was before the homing, and continue to wall following.
 
-  The primary functions created are:
-  calibratePhotoresistors - This function is run at the end of setup.  It spins the robot in a circle and records the ambient lighting conditions
-  love, explorer, agression, fear - These 4 functions set the speed of the left and right steppers based on the photoresistors to implement the corresponding Braitenberg behavior
-  loveStateMachine - This function implements the love Braitenberg behavior with obstacle avoidance and random wander
-  homing - This function runs the love behavior to move towards the light.  It also keeps track of its left and right wheel speeds each iteration and saves it to arrays for playback
-  returning - This function takes the speeds recorded in the homing function and feeds them back to the motors in reverse order.  This causes the robot to backtrack on its homing path.
-  HomingStateMachine - This function combines the homing and returning behaviors with the PD wall following from Lab03
   
   Hardware Connections:
   digital pin 13 - enable LED on microcontroller
@@ -48,7 +37,7 @@
 #include <MultiStepper.h>//include multiple stepper motor library
 #include <NewPing.h>
 #include <RunningMedian.h>
-//#include <SoftwareSerial.h>
+#include <Adafruit_VL53L0X.h>
 
 #define enableLED 13    //stepper enabled LED
 #define redLED 5        //red LED for displaying states
@@ -120,6 +109,9 @@ static inline double frontIRToInches(double analog) {return (-0.9298*analog + 13
 static inline double rightIRToInches(double analog) {return (-0.3141*analog + 1865.0)/(analog-48.02);}
 static inline double leftIRToInches(double analog) {return (-0.7801*analog + 2136.0)/(analog-20.15);}
 static inline double backIRToInches(double analog) {return (-0.6391*analog + 1144.0)/(analog+14.04);}
+
+//LOX Time Of Flight Sensor ----------------------------------------------------------------------------------------------------
+Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 
 //Sonar Defines and Variables --------------------------------------------------------------------------------------------------
 
@@ -199,6 +191,11 @@ void setup()
 
 // START BLUETOOTH SERIAL
   Serial2.begin(9600);
+
+// SETUP LOX TOF SENSOR
+  if (!lox.begin()) {
+    Serial.println("Failed to boot VL53L0X");
+  }
 
 // SETUP DEBUG LEDS
   pinMode(redLED, OUTPUT);                      //set red LED as output
@@ -285,16 +282,26 @@ const double kd_center = 200;          // The derivative control gain for center
 unsigned long last_read = 0;
 void loop()
 {
-//  //Every 100 milliseconds, print the photoresistor values
-//  int temp = millis() - last_read;
-//  if(temp > 500){
+  //Every 100 milliseconds, print the photoresistor values
+  int temp = millis() - last_read;
+  if(temp > 500){
 //    double leftPhoto = getPhotoresistorVoltage(LEFT_PHOTO);
 //    double rightPhoto = getPhotoresistorVoltage(RIGHT_PHOTO);
 //    Serial.print("Right: ");Serial.println(rightPhoto);
 //    Serial.print("Left: ");Serial.println(leftPhoto);
 //    Serial.println("-----------------------------");
-//    last_read = millis();
-//  }
+    VL53L0X_RangingMeasurementData_t measure;
+      
+    Serial.print("Reading a measurement... ");
+    lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
+  
+    if (measure.RangeStatus != 4) {  // phase failures have incorrect data
+      Serial.print("Distance (mm): "); Serial.println(measure.RangeMilliMeter);
+    } else {
+      Serial.println(" out of range ");
+    }
+    last_read = millis();
+  }
   
 //  // Keep reading from HC-05 and send to Arduino Serial Monitor
 //  if (Serial2.available()){
@@ -306,19 +313,24 @@ void loop()
 //  if (Serial.available()){
 //    Serial2.write(Serial.read());
 //  }
-    switch(waitForCommand()){
-      case 'T': //Topological Path Following: Follow a string of topological commands 
-        digitalWrite(redLED,HIGH);
-        topologicalPathFollowing();
-        digitalWrite(redLED,LOW);
-        break;
-      case 'P': //Metric Path Planning: Follow a string of metric commands
-        break;
-      case 'M': //Mapping: Map out the environment using the sensors
-        break;
-      case 'L': //Localization: Localize in an environment that we already know
-        break;
-    }
+
+
+//    switch(waitForCommand()){
+//      case 'T': //Topological Path Following: Follow a string of topological commands 
+//        digitalWrite(redLED,HIGH);
+//        topologicalPathFollowing();
+//        digitalWrite(redLED,LOW);
+//        break;
+//      case 'P': //Metric Path Planning: Follow a string of metric commands
+//        digitalWrite(ylwLED,HIGH);
+//        metricPathPlanning();
+//        digitalWrite(ylwLED,LOW);
+//        break;
+//      case 'M': //Mapping: Map out the environment using the sensors
+//        break;
+//      case 'L': //Localization: Localize in an environment that we already know
+//        break;
+//    }
     
     
 //  //Every 50 milliseconds, run the state machine
@@ -412,6 +424,46 @@ void topologicalPathFollowing(){
     idx++;
   }
   digitalWrite(grnLED,LOW);
+}
+
+void metricPathPlanning(){
+  char data[16];
+  waitForData(data);
+  digitalWrite(grnLED,HIGH);
+  Serial2.write("Got Path");
+  Serial.println(data);
+
+  int robotHeading = 0; //Assume we are pointing North to start which is 0 degrees
+  int nextHeading = 0;  //This is a temp variable to hold where the robot needs to turn
+  int idx = 0;
+  while(data[idx] != '-'){
+    if(data[idx] == 'N') nextHeading = 0;
+    else if(data[idx] == 'E') nextHeading = 90;
+    else if(data[idx] == 'S') nextHeading = 180;
+    else if(data[idx] == 'W') nextHeading = 270;
+    else break;
+    int dHeading = nextHeading-robotHeading;
+    bool turnDir = CLOCKWISE;
+    if(dHeading > 180){
+      dHeading -= 180;
+      turnDir = COUNTERCLOCKWISE;
+    } else if(dHeading < -180){
+      turnDir = CLOCKWISE;
+      dHeading += 180;
+      dHeading = dHeading*-1;
+    } else if(dHeading<0){
+      turnDir = COUNTERCLOCKWISE;
+      dHeading = dHeading*-1;
+    }
+    if(dHeading != 0) spin(turnDir,dHeading);
+    delay(250);
+    stopRobot();
+    forward(18.0);
+    stopRobot();
+    delay(250);
+    robotHeading = nextHeading;
+    idx++;
+  }
 }
 
 int lostCount = 0;
