@@ -1,8 +1,8 @@
-% Map Environment
-bt = Bluetooth('BRAITENBERG_BT', 1);
+function [robotLoc,walls] = getData(bt)
+%UNTITLED Summary of this function goes here
+%   Detailed explanation goes here
 fopen(bt);
 
-%%
 startString = '~';
 stopString = '!';
 while (true)
@@ -16,3 +16,7 @@ while (true)
         end
     end    
 end
+
+fclose(bt);
+end
+
