@@ -88,6 +88,7 @@ const double rightSpeedAdjustment = 1;
 #define COUNTERCLOCKWISE false
 
 #define COLLIDE_DIST 4.0
+#define WALL_THRESH 10.0
 
 #define LEFT  0                     //constant for left wheel
 #define RIGHT 1                     //constant for right wheel
@@ -112,6 +113,11 @@ static inline double backIRToInches(double analog) {return (-0.6391*analog + 114
 
 //LOX Time Of Flight Sensor ----------------------------------------------------------------------------------------------------
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
+static inline double frontTOFToInches(double mms) {return mms/25.40;}
+
+#define TOF_SENSOR 99
+#define NUM_TOF_SAMPLES 5
+RunningMedian tofData(NUM_TOF_SAMPLES);
 
 //Sonar Defines and Variables --------------------------------------------------------------------------------------------------
 
@@ -186,6 +192,7 @@ void initiateSonarRead(){
 
 void setup()
 {
+  
 // START SERIAL MONITOR
   Serial.begin(9600); //start serial communication at 9600 baud rate for debugging
 
@@ -242,6 +249,11 @@ void setup()
   digitalWrite(enableLED, HIGH);//turn on enable LED
   delay(pauseTime); //always wait 5 seconds before the robot moves
   Serial.println("Enter Commands: ");
+//      Serial2.write('~');
+//      Serial2.write(127);
+//      Serial2.write(127);
+//      Serial2.write(127);
+//      Serial2.write('!');
 }
 
 // Wall Follow Consts and Defines ----------------------------------------------------------------------------------------------
@@ -282,55 +294,47 @@ const double kd_center = 200;          // The derivative control gain for center
 unsigned long last_read = 0;
 void loop()
 {
-  //Every 100 milliseconds, print the photoresistor values
-  int temp = millis() - last_read;
-  if(temp > 500){
+//  //Every 100 milliseconds, print the photoresistor values
+//  int temp = millis() - last_read;
+//  if(temp > 500){
 //    double leftPhoto = getPhotoresistorVoltage(LEFT_PHOTO);
 //    double rightPhoto = getPhotoresistorVoltage(RIGHT_PHOTO);
 //    Serial.print("Right: ");Serial.println(rightPhoto);
 //    Serial.print("Left: ");Serial.println(leftPhoto);
 //    Serial.println("-----------------------------");
-    VL53L0X_RangingMeasurementData_t measure;
-      
-    Serial.print("Reading a measurement... ");
-    lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
-  
-    if (measure.RangeStatus != 4) {  // phase failures have incorrect data
-      Serial.print("Distance (mm): "); Serial.println(measure.RangeMilliMeter);
-    } else {
-      Serial.println(" out of range ");
+//    Serial.print("walls: ");Serial.println(getWalls(270.0));
+//    last_read = millis();
+//  }
+    Serial.println("Before Wait");
+    char command = waitForCommand();
+    Serial.print("Command: ");Serial.println(command);
+    switch(command){
+      case 'T': //Topological Path Following: Follow a string of topological commands 
+        digitalWrite(redLED,HIGH);
+        topologicalPathFollowing();
+        digitalWrite(redLED,LOW);
+        break;
+      case 'P': //Metric Path Planning: Follow a string of metric commands
+        digitalWrite(ylwLED,HIGH);
+        metricPathPlanning();
+        digitalWrite(ylwLED,LOW);
+        break;
+      case 'M': //Mapping: Map out the environment using the sensors
+        digitalWrite(grnLED,HIGH);
+        mapping();
+        digitalWrite(grnLED,LOW);
+        break;
+      case 'L': //Localization: Localize in an environment that we already know
+        digitalWrite(redLED,HIGH);
+        digitalWrite(ylwLED,HIGH);
+        localize();
+        digitalWrite(redLED,LOW);
+        digitalWrite(ylwLED,LOW);
+        break;
+      default:
+        Serial.println("HELP");
+        break;
     }
-    last_read = millis();
-  }
-  
-//  // Keep reading from HC-05 and send to Arduino Serial Monitor
-//  if (Serial2.available()){
-//    Serial.println(Serial2.read());
-//  }
-//    
-//
-//  // Keep reading from Arduino Serial Monitor and send to HC-05
-//  if (Serial.available()){
-//    Serial2.write(Serial.read());
-//  }
-
-
-//    switch(waitForCommand()){
-//      case 'T': //Topological Path Following: Follow a string of topological commands 
-//        digitalWrite(redLED,HIGH);
-//        topologicalPathFollowing();
-//        digitalWrite(redLED,LOW);
-//        break;
-//      case 'P': //Metric Path Planning: Follow a string of metric commands
-//        digitalWrite(ylwLED,HIGH);
-//        metricPathPlanning();
-//        digitalWrite(ylwLED,LOW);
-//        break;
-//      case 'M': //Mapping: Map out the environment using the sensors
-//        break;
-//      case 'L': //Localization: Localize in an environment that we already know
-//        break;
-//    }
     
     
 //  //Every 50 milliseconds, run the state machine
@@ -354,7 +358,7 @@ void loop()
  * 
  * Commands are 2 bytes long and always start with decimal 126 or '~'
  */
-int waitForCommand() {
+char waitForCommand() {
   char commandMsg[2] = {' ',' '};
   while(commandMsg[0]!='~'){
     if(Serial2.available()){
@@ -376,6 +380,303 @@ void waitForData(char dataArray[]){
       idx++;
     }
   }
+}
+
+void localize() {
+  uint8_t tmap[4][4];
+  char btString[32];
+  waitForData(btString);
+  int idx = 0;
+  for(int y = 3;y>=0;y--){
+    for(int x = 0;x<4;x++){
+      tmap[x][y] = btString[idx];
+      idx++;
+    }
+  }
+  for(int y = 3;y>=0;y--){
+    for(int x = 0;x<4;x++){
+      Serial.print(tmap[x][y]);Serial.print("  ");
+    }
+    Serial.println();
+  }
+}
+
+uint8_t mapm[4][4];
+uint8_t visited[4][4];
+
+void mapping() {
+  char startLocation[16];
+  waitForData(startLocation);
+  int startX = startLocation[0];
+  int startY = startLocation[1];
+  Serial.print("X: ");Serial.println(startX);
+  Serial.print("Y: ");Serial.println(startY);
+  int currentX = startX;
+  int currentY = startY;
+  int robotHeading = 0;
+  bool skipMove = false;
+
+  // Initialize the map variable
+
+  for(int x = 0;x<4;x++){
+    for(int y = 0;y<4;y++){
+      mapm[x][y] = 0;
+      visited[x][y] = 0;
+    }
+  }
+  
+  // Add the world perimeter to the map variable
+  mapm[0][0] = 12;
+  mapm[1][0] = 4;
+  mapm[2][0] = 4;
+  mapm[3][0] = 6;
+  mapm[3][1] = 2;
+  mapm[3][2] = 2;
+  mapm[3][3] = 3;
+  mapm[2][3] = 1;
+  mapm[1][3] = 1;
+  mapm[0][3] = 9;
+  mapm[0][2] = 8;
+  mapm[0][1] = 8;
+  
+  while(true){
+    char ignore[16];
+    waitForData(ignore);
+    uint8_t walls = getWalls(robotHeading);
+    mapm[currentX][currentY] |= walls;
+    visited[currentX][currentY] = 1;
+
+    // North
+    if(currentY < 3 && (walls&0x01)){
+      mapm[currentX][currentY+1] |= 0x04;
+    }
+    // East
+    if(currentX < 3 && (walls&0x02)){
+      mapm[currentX+1][currentY] |= 0x08;
+    }
+    // South
+    if(currentY > 1 && (walls&0x04)){
+      mapm[currentX][currentY-1] |= 0x01;
+    }
+    // West
+    if(currentY > 1 && (walls&0x08)){
+      mapm[currentX-1][currentY] |= 0x02;
+    }
+    
+    Serial2.write('~');
+    Serial2.write(currentX);
+    Serial2.write(currentY);
+    Serial2.write(mapm[currentX][currentY]);
+    Serial2.write('!');
+
+
+    Serial.print("Current X,Y: "); Serial.print(currentX); Serial.print(" , ");Serial.println(currentY);
+    for(int y = 3;y>=0;y--){
+      for(int x = 0;x<4;x++){
+        Serial.print(mapm[x][y]);Serial.print("  ");
+      }
+      Serial.println();
+    }
+
+    for(int y = 3;y>=0;y--){
+      for(int x = 0;x<4;x++){
+        Serial.print(visited[x][y]);Serial.print("  ");
+      }
+      Serial.println();
+    }
+
+    // If any map square has walls on every side, 
+    // mark it as visited because it is inaccessible 
+    for(int x = 0;x<4;x++){
+      for(int y = 0;y<4;y++){
+        if(mapm[x][y] == 15){
+          visited[x][y] = 1;
+        }
+      }
+    }
+
+    // Check if all spots have been visited, if they are then break out of the loop
+    bool check = true;
+    for(int x = 0;x<4;x++){
+      for(int y = 0;y<4;y++){
+        if(mapm[x][y] == 15){
+          check = check&&(visited[x][y]==1);
+        }
+      }
+    }
+    if(!check) break;
+
+    // Figure out where to go next
+    int nextHeading = 0;
+    if(currentY < 3 && visited[currentX][currentY+1]!=1 && !(0x01&mapm[currentX][currentY])){
+      nextHeading = 0;
+      currentX = currentX;
+      currentY = currentY+1;
+    } else if(currentX < 3 && visited[currentX+1][currentY]!=1 && !(0x02&mapm[currentX][currentY])){
+      nextHeading = 90;
+      currentX = currentX+1;
+      currentY = currentY;
+    } else if(currentX > 0 && visited[currentX-1][currentY]!=1 && !(0x08&mapm[currentX][currentY])){
+      nextHeading = 270;
+      currentX = currentX-1;
+      currentY = currentY;
+    } else if(currentY > 0 && visited[currentX][currentY-1]!=1 && !(0x04&mapm[currentX][currentY])){
+      nextHeading = 180;
+      currentX = currentX;
+      currentY = currentY-1;
+    } else{
+      //If none of the neighbors are unvisited follow the left wall till you get to an unvisited square
+      uint8_t currentWalls = getRelativeWalls();
+      //If no left wall, go left
+      if(!(currentWalls&0x08)){
+        nextHeading = robotHeading-90;
+        if(nextHeading < 0){
+          nextHeading = 270;
+        }
+        
+        if(nextHeading == 0) {
+          currentX = currentX;
+          currentY = currentY+1;
+        } else if(nextHeading == 90) {
+          currentX = currentX+1;
+          currentY = currentY;
+        } else if(nextHeading == 180) {
+          currentX = currentX;
+          currentY = currentY-1;
+        } else if(nextHeading == 270) {
+          currentX = currentX-1;
+          currentY = currentY;
+        }
+      }
+      //If left wall covered and straight wall not
+      else if(!(currentWalls&0x01)){
+        nextHeading = robotHeading;
+        if(nextHeading == 0) {
+          currentX = currentX;
+          currentY = currentY+1;
+        } else if(nextHeading == 90) {
+          currentX = currentX+1;
+          currentY = currentY;
+        } else if(nextHeading == 180) {
+          currentX = currentX;
+          currentY = currentY-1;
+        } else if(nextHeading == 270) {
+          currentX = currentX-1;
+          currentY = currentY;
+        }
+      }
+      // Turn right if we cant go left or straight
+      else{
+        robotHeading += 90;
+        spin(CLOCKWISE,90);
+        skipMove = true;
+      }
+
+//      break;
+    }
+
+    if(!skipMove){
+      // Calculate and then perform the moves to get to the next grid space
+      int dHeading = nextHeading-robotHeading;
+      bool turnDir = CLOCKWISE;
+      if(dHeading > 180){
+        dHeading -= 180;
+        turnDir = COUNTERCLOCKWISE;
+      } else if(dHeading < -180){
+        turnDir = CLOCKWISE;
+        dHeading += 180;
+        dHeading = dHeading*-1;
+      } else if(dHeading<0){
+        turnDir = COUNTERCLOCKWISE;
+        dHeading = dHeading*-1;
+      }
+      if(dHeading != 0) spin(turnDir,dHeading);
+      delay(250);
+      stopRobot();
+      forward(18.0);
+      stopRobot();
+      delay(250);
+      robotHeading = nextHeading;
+    } else {
+      skipMove = false;
+    }
+
+  }
+
+  //SEND STOP MESSAGE
+  Serial2.write('~');
+  Serial2.write(127);
+  Serial2.write(127);
+  Serial2.write(127);
+  Serial2.write('!');
+}
+
+/* getRelativeWalls()
+ * 
+ */
+uint8_t getRelativeWalls(){
+  double leftSonar = getLinearizedDistance(LEFT_SONAR);
+  double rightSonar = getLinearizedDistance(RIGHT_SONAR);
+  double frontTOF = getLinearizedDistance(TOF_SENSOR);
+  uint8_t walls = 0;
+
+  if(leftSonar <= WALL_THRESH){
+    walls |= 0x08;
+  }
+  if(rightSonar <= WALL_THRESH){
+    walls |= 0x02;
+  }
+  if(frontTOF <= WALL_THRESH){
+    walls |= 0x01;
+  }
+  return walls;
+}
+
+/* getWalls(robotHeading)
+ * 
+ * robotHeading tells the function which direction the robot is currently facing. 0 is N, 90 is E, 180 is S, 270 is W
+ */
+uint8_t getWalls(double robotHeading) {
+  double leftSonar = getLinearizedDistance(LEFT_SONAR);
+  double rightSonar = getLinearizedDistance(RIGHT_SONAR);
+  double frontTOF = getLinearizedDistance(TOF_SENSOR);
+  uint8_t walls = 0;
+
+  if(leftSonar <= WALL_THRESH){
+    if(robotHeading == 0){
+      walls |= 0x08;
+    } else if(robotHeading == 90){
+      walls |= 0x01;
+    } else if(robotHeading == 180){
+      walls |= 0x02;
+    } else if(robotHeading == 270){
+      walls |= 0x04;
+    }
+  }
+  if(rightSonar <= WALL_THRESH){
+    if(robotHeading == 0){
+      walls |= 0x02;
+    } else if(robotHeading == 90){
+      walls |= 0x04;
+    } else if(robotHeading == 180){
+      walls |= 0x08;
+    } else if(robotHeading == 270){
+      walls |= 0x01;
+    }
+  }
+
+  if(frontTOF <= WALL_THRESH){
+    if(robotHeading == 0){
+      walls |= 0x01;
+    } else if(robotHeading == 90){
+      walls |= 0x02;
+    } else if(robotHeading == 180){
+      walls |= 0x04;
+    } else if(robotHeading == 270){
+      walls |= 0x08;
+    }
+  }
+  return walls;
 }
 
 void topologicalPathFollowing(){
@@ -728,6 +1029,18 @@ double getLinearizedDistance(int sensor){
     case RIGHT_SONAR:
       return (double(rightSonarData.getMedian())/soundInchRoundTrip)-0.7;
       break;
+    case TOF_SENSOR:
+      VL53L0X_RangingMeasurementData_t measure;
+      for (int i = 0; i < NUM_TOF_SAMPLES-1; i++) {
+        lox.rangingTest(&measure, false);
+    
+        if (measure.RangeStatus != 4) {
+          tofData.add(measure.RangeMilliMeter);
+        } else {
+          tofData.add(1000.0);
+        }
+      }
+      return frontTOFToInches(tofData.getMedian());
     default:
       break;
   }
