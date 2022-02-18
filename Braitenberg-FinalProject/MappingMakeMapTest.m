@@ -1,3 +1,9 @@
+clear; clc;
+bt = Bluetooth('BRAITENBERG_BT',1);
+fopen(bt);
+%%
+% fwrite(bt, '~M');
+
 map = zeros(4,4);
 [numRows,numCols] = size(map);
 
@@ -7,9 +13,11 @@ axis(ax,[-1 numCols+1 -1 numRows+1])
 rectangle(ax,'Position',[0 0 numCols numRows],'LineWidth',2);
 % set(gcf,'position',[100,100,500,500]);
 
+% [xLoc, yLoc, walls] = fread(bt);
+
 xLocNew = xLoc + 1;
 yLocNew = numRows - yLoc;
-map(xLocNew, yLocNew) = walls;
+map(yLocNew, xLocNew) = walls;
 
 for r = 1:numRows
     for c = 1:numCols
