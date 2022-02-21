@@ -2,7 +2,19 @@
   Braitenberg-FinalProject.ino
   Jordan Asman and Cory Snyder 2.3.2022
 
+  This file implements the Final Project which focuses on Navigation and Localization.  
+  There are four primary tasks: Topological Path Following, Metric Path Planning, Mapping, and Localization. 
+  The robot is communicating with a MATLAB GUI through a Bluetooth connection with a laptop. 
 
+  Primary Functions:
+  waitForCommand - This function pauses robot operation and waits for a command from the GUI. Commands start with a '~' and end with 'T', 'P', 'M', or 'L' for the 4 tasks
+  waitForData - This function pauses robot operation and waits for a data message from the GUI. Data messages can be variable length and always end with a '-'
+  localize - This function implements the Localization task from the project. It sends its location to the GUI once it has localized
+  mapping - This function implements the Mapping task from the project. It continually sends wall data to the GUI as it explores the map.
+  getRelativeWalls - This function returns which walls (left, front, or right) it currently senses
+  getWalls - This function returns which walls (North, East, South, or West) it currently senses
+  topologicalPathFollowing - This function implements the Topological Path Following task for the project. It receives a Topological Path from the GUI and follows it
+  metricPathPlanning - This function implements Metric Path Planning for the project. It receives a Navigation Plan from the GUI and follows it to the goal location
   
   Hardware Connections:
   digital pin 13 - enable LED on microcontroller
@@ -26,9 +38,6 @@
   analog pin A13 - front IR sensor
   analog pin A12 - right IR sensor
 
-  analog pin A0 - left photoresistor
-  analog pin A1 - right photoresistor
-
   digital pin 19 (has Interrupts) - right Sonar sensor 
   digital pin 18 (has Interrupts) - left Sonar sensor
 */
@@ -46,6 +55,7 @@
 
 #define pauseTime 1000 //time before robot moves
 #define wait_time 1000 //time to wait between prints and starting robot
+#define inter_time 250 //time the robot waits between moves
 
 //Bluetooth --------------------------------------------------------------------------------------------------------------------
 #define BT_TX_PIN 16
@@ -73,6 +83,7 @@ const double distancePerTick = wheelDiameter*PI/ticksPerRev; // the distance mov
 const double pivotDegreesToSteps = (2*PI*pivotWheelDist*inchesToSteps)/360.0;
 const double spinDegreesToSteps = (PI*spinWheelDist*inchesToSteps)/360.0;
 const double rightSpeedAdjustment = 1;
+const double gridSize = 18.0; // Size in inches of the map grid
 
 #define maximumSpeed 1500
 #define maxAccel 1000
@@ -248,12 +259,6 @@ void setup()
   digitalWrite(STEP_EN_PIN, STEP_ENABLE);//turns on the stepper motor driver
   digitalWrite(enableLED, HIGH);//turn on enable LED
   delay(pauseTime); //always wait 5 seconds before the robot moves
-  Serial.println("Enter Commands: ");
-//      Serial2.write('~');
-//      Serial2.write(127);
-//      Serial2.write(127);
-//      Serial2.write(127);
-//      Serial2.write('!');
 }
 
 // Wall Follow Consts and Defines ----------------------------------------------------------------------------------------------
@@ -294,17 +299,6 @@ const double kd_center = 200;          // The derivative control gain for center
 unsigned long last_read = 0;
 void loop()
 {
-//  //Every 100 milliseconds, print the photoresistor values
-//  int temp = millis() - last_read;
-//  if(temp > 500){
-//    double leftPhoto = getPhotoresistorVoltage(LEFT_PHOTO);
-//    double rightPhoto = getPhotoresistorVoltage(RIGHT_PHOTO);
-//    Serial.print("Right: ");Serial.println(rightPhoto);
-//    Serial.print("Left: ");Serial.println(leftPhoto);
-//    Serial.println("-----------------------------");
-//    Serial.print("walls: ");Serial.println(getWalls(270.0));
-//    last_read = millis();
-//  }
     Serial.println("Before Wait");
     char command = waitForCommand();
     Serial.print("Command: ");Serial.println(command);
@@ -316,7 +310,7 @@ void loop()
         break;
       case 'P': //Metric Path Planning: Follow a string of metric commands
         digitalWrite(ylwLED,HIGH);
-        metricPathPlanning();
+        metricPathPlanning(0);
         digitalWrite(ylwLED,LOW);
         break;
       case 'M': //Mapping: Map out the environment using the sensors
@@ -335,20 +329,6 @@ void loop()
         Serial.println("HELP");
         break;
     }
-    
-    
-//  //Every 50 milliseconds, run the state machine
-//  int temp = millis() - last_read;
-//  if(temp > PHOTO_SAMPLE_MS){
-////    loveStateMachine();
-//    HomingStateMachine();
-//    last_read = millis();
-//  }
-//  
-//  //Run the stepper motors at the speed they were set
-//  stepperRight.runSpeed();
-//  stepperLeft.runSpeed();
-
 }
 
 /* waitForCommand()
@@ -370,6 +350,13 @@ char waitForCommand() {
   return commandMsg[1];
 }
 
+/* waitForData(dataArray[])
+ * 
+ * This function waits for Matlab to send a data message to the robot
+ * and then writes it to the dataArray buffer
+ * 
+ * Messages can be variable length, but always end with '-'
+ */
 void waitForData(char dataArray[]){
   char lastChar = ' ';
   int idx = 0;
@@ -382,26 +369,172 @@ void waitForData(char dataArray[]){
   }
 }
 
+/* localize()
+ * 
+ * This function implements the Localization task for the project
+ * 
+ * The robot waits for a map to be sent to it from the GUI and then localizes according to that map
+ * 
+ * Once the robot has localized, it sends the GUI a message with it's location in the map. It then
+ * waits for the GUI to send back a Metric Path Plan to go to the end goal
+ */
+uint8_t mapL[4][4];
 void localize() {
-  uint8_t tmap[4][4];
+  uint8_t mapL[4][4];
   char btString[32];
   waitForData(btString);
   int idx = 0;
   for(int y = 3;y>=0;y--){
     for(int x = 0;x<4;x++){
-      tmap[x][y] = btString[idx];
+      mapL[x][y] = btString[idx];
       idx++;
     }
   }
   for(int y = 3;y>=0;y--){
     for(int x = 0;x<4;x++){
-      Serial.print(tmap[x][y]);Serial.print("  ");
+      Serial.print(mapL[x][y]);Serial.print("  ");
     }
     Serial.println();
   }
+
+  int possibleX[16];
+  int possibleY[16];
+  idx = 0;
+  for(int y = 0;y<4;y++){
+    for(int x = 0;x<4;x++){
+      possibleX[idx] = x;
+      possibleY[idx] = y;
+      Serial.print("Possible XY: ");Serial.print(possibleX[idx]);Serial.print(",");Serial.println(possibleY[idx]);
+      idx++;
+    }
+  }
+  
+  int possibilities = 16;
+
+  // Assume the robot starts facing north
+  int robotHeading = 0;
+  uint8_t walls = 0;
+
+  while(true) {
+    walls = getWalls(robotHeading);
+    Serial.print("Walls: ");Serial.println(walls);
+
+    // Loop through all the spots on the map where we could be and see if this iteration's walls match
+    int possIdx = 0;
+    for(int i = 0;i<possibilities;i++){
+      
+      int x = possibleX[i];
+      int y = possibleY[i];
+      // If this location on the map has all of the walls we just detected
+      if(robotHeading == 0){
+        if((walls&0x0B) == (mapL[x][y]&0x0B)){
+          Serial.print("Possible XY: ");Serial.print(x);Serial.print(",");Serial.println(y);
+          //Save that location to the list of possible x y's for next iteration
+          possibleX[possIdx] = x;
+          possibleY[possIdx] = y;
+          possIdx++;
+        }
+      } else if(robotHeading == 90){
+        if((walls&0x07) == (mapL[x][y]&0x07)){
+          Serial.print("Possible XY: ");Serial.print(x);Serial.print(",");Serial.println(y);
+          //Save that location to the list of possible x y's for next iteration
+          possibleX[possIdx] = x;
+          possibleY[possIdx] = y;
+          possIdx++;
+        }
+      } else if(robotHeading == 180){
+        if((walls&0x0E) == (mapL[x][y]&0x0E)){
+          Serial.print("Possible XY: ");Serial.print(x);Serial.print(",");Serial.println(y);
+          //Save that location to the list of possible x y's for next iteration
+          possibleX[possIdx] = x;
+          possibleY[possIdx] = y;
+          possIdx++;
+        }
+      } else if(robotHeading == 270){
+        if((walls&0x0D) == (mapL[x][y]&0x0D)){
+          Serial.print("Possible XY: ");Serial.print(x);Serial.print(",");Serial.println(y);
+          //Save that location to the list of possible x y's for next iteration
+          possibleX[possIdx] = x;
+          possibleY[possIdx] = y;
+          possIdx++;
+        }
+      } else {
+        Serial.println("AAAAHHHHHHH HELP");
+      }
+    }
+    
+    possibilities = possIdx;
+    // Break the loop if there is only one possibility
+    if(possibilities <= 1) break;
+
+    // Make a move to an available next location
+    int nextHeading = 0;
+    if(!(walls&0x01)){ //No north wall
+      nextHeading = 0;
+      for(int q = 0;q<possibilities;q++){
+        possibleY[q] = possibleY[q]+1;
+      }
+    } else if(!(walls&0x02)){//No east wall
+      nextHeading = 90;
+      for(int q = 0;q<possibilities;q++){
+        possibleX[q] = possibleX[q]+1;
+      }
+    } else if(!(walls&0x08)){
+      nextHeading = 270;
+      for(int q = 0;q<possibilities;q++){
+        possibleX[q] = possibleX[q]-1;
+      }
+    } else if(!(walls&0x04)){
+      nextHeading = 180;
+      for(int q = 0;q<possibilities;q++){
+        possibleY[q] = possibleY[q]-1;
+      }
+    }
+
+    // Calculate and then perform the moves to get to the next grid space
+    int dHeading = nextHeading-robotHeading;
+    bool turnDir = CLOCKWISE;
+    if(dHeading > 180){
+      dHeading -= 180;
+      turnDir = COUNTERCLOCKWISE;
+    } else if(dHeading < -180){
+      turnDir = CLOCKWISE;
+      dHeading += 180;
+      dHeading = dHeading*-1;
+    } else if(dHeading<0){
+      turnDir = COUNTERCLOCKWISE;
+      dHeading = dHeading*-1;
+    }
+    if(dHeading != 0) spin(turnDir,dHeading);
+    delay(inter_time);
+    stopRobot();
+    forward(gridSize);
+    stopRobot();
+    delay(inter_time);
+    robotHeading = nextHeading;
+  }
+
+  int currentX = possibleX[0];
+  int currentY = possibleY[0];
+  Serial.print("Localized XY: ");Serial.print(currentX);Serial.print(",");Serial.println(currentY);
+  Serial2.write('~');
+  Serial2.write(currentX);
+  Serial2.write(currentY);
+  Serial2.write('!');
+  digitalWrite(grnLED,HIGH);
+  metricPathPlanning(robotHeading);
+  digitalWrite(grnLED,LOW);
 }
 
-uint8_t mapm[4][4];
+/* mapping()
+ *  
+ * This function implements the Mapping task for the project.
+ *  
+ * It continually sends wall data to the GUI as it explores the map starting 
+ * at the start location sent from the GUI.  Once all spots have been explored,
+ * the robot stops mapping and returns.
+ */
+uint8_t mapM[4][4];
 uint8_t visited[4][4];
 
 void mapping() {
@@ -420,60 +553,60 @@ void mapping() {
 
   for(int x = 0;x<4;x++){
     for(int y = 0;y<4;y++){
-      mapm[x][y] = 0;
+      mapM[x][y] = 0;
       visited[x][y] = 0;
     }
   }
   
   // Add the world perimeter to the map variable
-  mapm[0][0] = 12;
-  mapm[1][0] = 4;
-  mapm[2][0] = 4;
-  mapm[3][0] = 6;
-  mapm[3][1] = 2;
-  mapm[3][2] = 2;
-  mapm[3][3] = 3;
-  mapm[2][3] = 1;
-  mapm[1][3] = 1;
-  mapm[0][3] = 9;
-  mapm[0][2] = 8;
-  mapm[0][1] = 8;
+  mapM[0][0] = 12;
+  mapM[1][0] = 4;
+  mapM[2][0] = 4;
+  mapM[3][0] = 6;
+  mapM[3][1] = 2;
+  mapM[3][2] = 2;
+  mapM[3][3] = 3;
+  mapM[2][3] = 1;
+  mapM[1][3] = 1;
+  mapM[0][3] = 9;
+  mapM[0][2] = 8;
+  mapM[0][1] = 8;
   
   while(true){
     char ignore[16];
     waitForData(ignore);
     uint8_t walls = getWalls(robotHeading);
-    mapm[currentX][currentY] |= walls;
+    mapM[currentX][currentY] |= walls;
     visited[currentX][currentY] = 1;
 
     // North
     if(currentY < 3 && (walls&0x01)){
-      mapm[currentX][currentY+1] |= 0x04;
+      mapM[currentX][currentY+1] |= 0x04;
     }
     // East
     if(currentX < 3 && (walls&0x02)){
-      mapm[currentX+1][currentY] |= 0x08;
+      mapM[currentX+1][currentY] |= 0x08;
     }
     // South
     if(currentY > 1 && (walls&0x04)){
-      mapm[currentX][currentY-1] |= 0x01;
+      mapM[currentX][currentY-1] |= 0x01;
     }
     // West
     if(currentY > 1 && (walls&0x08)){
-      mapm[currentX-1][currentY] |= 0x02;
+      mapM[currentX-1][currentY] |= 0x02;
     }
     
     Serial2.write('~');
     Serial2.write(currentX);
     Serial2.write(currentY);
-    Serial2.write(mapm[currentX][currentY]);
+    Serial2.write(mapM[currentX][currentY]);
     Serial2.write('!');
 
 
     Serial.print("Current X,Y: "); Serial.print(currentX); Serial.print(" , ");Serial.println(currentY);
     for(int y = 3;y>=0;y--){
       for(int x = 0;x<4;x++){
-        Serial.print(mapm[x][y]);Serial.print("  ");
+        Serial.print(mapM[x][y]);Serial.print("  ");
       }
       Serial.println();
     }
@@ -489,7 +622,7 @@ void mapping() {
     // mark it as visited because it is inaccessible 
     for(int x = 0;x<4;x++){
       for(int y = 0;y<4;y++){
-        if(mapm[x][y] == 15){
+        if(mapM[x][y] == 15){
           visited[x][y] = 1;
         }
       }
@@ -499,7 +632,7 @@ void mapping() {
     bool check = true;
     for(int x = 0;x<4;x++){
       for(int y = 0;y<4;y++){
-        if(mapm[x][y] == 15){
+        if(mapM[x][y] == 15){
           check = check&&(visited[x][y]==1);
         }
       }
@@ -508,19 +641,19 @@ void mapping() {
 
     // Figure out where to go next
     int nextHeading = 0;
-    if(currentY < 3 && visited[currentX][currentY+1]!=1 && !(0x01&mapm[currentX][currentY])){
+    if(currentY < 3 && visited[currentX][currentY+1]!=1 && !(0x01&mapM[currentX][currentY])){
       nextHeading = 0;
       currentX = currentX;
       currentY = currentY+1;
-    } else if(currentX < 3 && visited[currentX+1][currentY]!=1 && !(0x02&mapm[currentX][currentY])){
+    } else if(currentX < 3 && visited[currentX+1][currentY]!=1 && !(0x02&mapM[currentX][currentY])){
       nextHeading = 90;
       currentX = currentX+1;
       currentY = currentY;
-    } else if(currentX > 0 && visited[currentX-1][currentY]!=1 && !(0x08&mapm[currentX][currentY])){
+    } else if(currentX > 0 && visited[currentX-1][currentY]!=1 && !(0x08&mapM[currentX][currentY])){
       nextHeading = 270;
       currentX = currentX-1;
       currentY = currentY;
-    } else if(currentY > 0 && visited[currentX][currentY-1]!=1 && !(0x04&mapm[currentX][currentY])){
+    } else if(currentY > 0 && visited[currentX][currentY-1]!=1 && !(0x04&mapM[currentX][currentY])){
       nextHeading = 180;
       currentX = currentX;
       currentY = currentY-1;
@@ -571,8 +704,6 @@ void mapping() {
         spin(CLOCKWISE,90);
         skipMove = true;
       }
-
-//      break;
     }
 
     if(!skipMove){
@@ -591,11 +722,11 @@ void mapping() {
         dHeading = dHeading*-1;
       }
       if(dHeading != 0) spin(turnDir,dHeading);
-      delay(250);
+      delay(inter_time);
       stopRobot();
-      forward(18.0);
+      forward(gridSize);
       stopRobot();
-      delay(250);
+      delay(inter_time);
       robotHeading = nextHeading;
     } else {
       skipMove = false;
@@ -613,6 +744,13 @@ void mapping() {
 
 /* getRelativeWalls()
  * 
+ * This function returns a uint8_t value that describes what walls the robot is currently sensing,
+ * but relative to the orientation of the robot
+ * 
+ * Only 3 bits of the uint8_t return value is used:
+ * The first bit will be 1 if there is a wall in front of the robot
+ * The second bit will be 1 if there is a wall to the right of the robot
+ * The fourth bit will be 1 if there is a wall to the left of the robot
  */
 uint8_t getRelativeWalls(){
   double leftSonar = getLinearizedDistance(LEFT_SONAR);
@@ -633,6 +771,14 @@ uint8_t getRelativeWalls(){
 }
 
 /* getWalls(robotHeading)
+ * 
+ * This function returns a uint8_t value that describes what walls the robot is currently sensing.
+ * 
+ * Only 4 bits of the uint8_t return value is used:
+ * The first bit will be 1 if there is a wall to the North in the robot's current location
+ * The second bit will be 1 if there is a wall to the East
+ * The third bit will be 1 if there is a wall to the South
+ * The fourth bit will be 1 if there is a wall to the West
  * 
  * robotHeading tells the function which direction the robot is currently facing. 0 is N, 90 is E, 180 is S, 270 is W
  */
@@ -679,6 +825,16 @@ uint8_t getWalls(double robotHeading) {
   return walls;
 }
 
+/* topologicalPathFollowing()
+ * 
+ * This function implements the Topological Path Following task for the project
+ * 
+ * The robot waits to receive a string of commands ('R' or 'L')
+ * and follows the left or right walls according to the commands.
+ * 
+ * Once the robot reaches the end of a wall segement, the robot turns to the right 
+ * or the left according to the 'R' or 'L' command
+ */
 void topologicalPathFollowing(){
   char data[8];
   waitForData(data);
@@ -727,14 +883,28 @@ void topologicalPathFollowing(){
   digitalWrite(grnLED,LOW);
 }
 
-void metricPathPlanning(){
+/* metricPathPlanning(int robotHeading)
+ * 
+ * This funciton implements the Metric Path Planning task for the project
+ * 
+ * First, the robot waits to be sent a string of data. 
+ * The string of data contains instructions for the robot in the form of:
+ * 'N' go North
+ * 'E' go East
+ * 'S' go South
+ * 'W' go West
+ * 
+ * Then, given the robots current heading (robotHeading), the robot carries out the 
+ * instructions from the string
+ */
+void metricPathPlanning(int robotHeading){
   char data[16];
   waitForData(data);
   digitalWrite(grnLED,HIGH);
   Serial2.write("Got Path");
   Serial.println(data);
 
-  int robotHeading = 0; //Assume we are pointing North to start which is 0 degrees
+  robotHeading = 0; //Assume we are pointing North to start which is 0 degrees
   int nextHeading = 0;  //This is a temp variable to hold where the robot needs to turn
   int idx = 0;
   while(data[idx] != '-'){
@@ -759,7 +929,7 @@ void metricPathPlanning(){
     if(dHeading != 0) spin(turnDir,dHeading);
     delay(250);
     stopRobot();
-    forward(18.0);
+    forward(gridSize);
     stopRobot();
     delay(250);
     robotHeading = nextHeading;
@@ -767,9 +937,21 @@ void metricPathPlanning(){
   }
 }
 
+/*
+ * This function counts to see whether the robot has departed from the 
+ * wall for 15 or more iterations.  It returns true of the robot has 
+ * departed from the wall, and false if the robot hasn't
+ * 
+ * Each interation, the distance from the sensor should be passed in so
+ * this function can keep track of how many times it has or hasn't lost the wall. 
+ */
 int lostCount = 0;
 bool lostWall(double dist) {
-  if(dist>15) lostCount++;
+  if(dist>15) {
+    lostCount++;
+  } else {
+    lostCount = 0;
+  }
   if(lostCount>15){
     lostCount = 0;
     return true;
@@ -827,147 +1009,6 @@ void followCenterPD(double leftDist, double rightDist) {
   setSpeeds(leftWheelSpeed - controlEffort, rightWheelSpeed + controlEffort);
   pastErrorCenter = error;
 }
-
-/*
- * insideCorner(leftSonarDist, rightSonarDist, frontIRDist)
- * 
- * Using the left, right, and front distances from the sensors, this function chooses to execute a
- * left or right inside corner.  It first reverses the robot to make room for a 90 degree pivot in
- * the left or right direction.  It chooses to turn left or right based on which wall (left or right)
- * is clsoer
- */
-void insideCorner(double leftSonarDist, double rightSonarDist, double frontIRDist) {
-  if (frontIRDist > IR_WALL_DETECT_DIST - 1) {
-    reverse(ROBOT_WIDTH - frontIRDist);
-  }
-  if (leftSonarDist > rightSonarDist) {
-    pivot(COUNTERCLOCKWISE, 90);
-  }
-  else {
-    pivot(CLOCKWISE, 90);
-  }
-}
-
-/*
- * outsideCornerLeft()
- * 
- * This function maneuvers the robot to turn around an outside left corner.
- */
-void outsideCornerLeft() {
-  forward(ROBOT_LENGTH / 4);
-  pivot(COUNTERCLOCKWISE, 90);
-  forward(ROBOT_LENGTH / 2);
-}
-
-/*
- * outsideCornerRight()
- * 
- * This function maneuvers the robot to turn around an outside right corner.
- */
-void outsideCornerRight() {
-  forward(ROBOT_LENGTH / 4);
-  pivot(CLOCKWISE, 90);
-  forward(ROBOT_LENGTH / 2);
-}
-
-/*
- * hallwayEnd(frontIRDist)
- * 
- * This function backs the robot up and spins 180 degrees to turn around at the end of a hallway.
- * The frontIRDist is used to calculate how much the robot needs to reverese before executing the
- * spin
- * 
- * BLOCKING FUNCTION
- */
-void hallwayEnd(double frontIRDist) {
-  reverse(ROBOT_LENGTH - frontIRDist);
-  spin(CLOCKWISE, 180);
-}
-
-/* randomWander()
- *  This function sets the speeds of the left and the right steppers to a random speed
- *  every 1 second
- */
-double randLSpeed = 0.0;
-double randRSpeed = 0.0;
-long lastRandom = 0;
-
-void randomWander() {
-  if(millis() - lastRandom > 1000){
-      randLSpeed = random(800);
-      randRSpeed = random(800);
-      
-      lastRandom = millis();
-  }
-  setSpeeds(randLSpeed,randRSpeed);
-}
-
-/* detectedObstacle()
- *  This function returns true if there is an object detected by the 4 IR sensors within the COLLIDE_DIST
- */
-boolean detectedObstacle(){
-  double frontDist = getLinearizedDistance(FRONT_IR);
-  double backDist = getLinearizedDistance(BACK_IR);
-  double rightDist = getLinearizedDistance(RIGHT_IR);
-  double leftDist = getLinearizedDistance(LEFT_IR);
-
-  return frontDist < COLLIDE_DIST || backDist < COLLIDE_DIST || leftDist < COLLIDE_DIST || rightDist < COLLIDE_DIST;
-}
-
-/* runAway()
- *  This function uses the 4 IR sensors to move away from any obstacle that is detected
- */
-void runAway(){
-  double frontDist = getLinearizedDistance(FRONT_IR);
-  double backDist = getLinearizedDistance(BACK_IR);
-  double rightDist = getLinearizedDistance(RIGHT_IR);
-  double leftDist = getLinearizedDistance(LEFT_IR);
-  double xForce = 0.0;
-  double yForce = 0.0;
-  // The front IR feels forces that push in the negative x direction
-  // The back IR feels forces that push in the positive x direction
-  xForce += -1*(12.0 - frontDist) + (12.0 - backDist);
-  // The left IR feels forces that push in the negative y direction
-  // The right IR feels forces that push in the positive y direction
-  yForce += -1*(12.0 - leftDist) + (12.0 - rightDist);
-  
-  double magnitude = sqrt(xForce*xForce+yForce*yForce);
-  double angle = atan2(yForce,xForce)*180.0/PI;
-  if(xForce < 0.0) setSpeeds(-300,-300);
-  else setSpeeds(300,300);
-
-
-  if(frontDist <= 4.0 && backDist <= 4.0 && leftDist <= 4.0 && rightDist <= 4.0){
-    //DO NOTHING
-    setSpeeds(0.0,0.0);
-  } else if(frontDist <= 4.0 && backDist <= 4.0){
-    if(yForce>0.0){
-      spin(CLOCKWISE,90.0);
-      if(yForce < 0.0) setSpeeds(300,300);
-      else setSpeeds(-300,-300);
-    } else{
-      spin(COUNTERCLOCKWISE,90.0);
-      if(yForce < 0.0) setSpeeds(-300,-300);
-      else setSpeeds(300,300);
-    }
-  }
-  
-  while(detectedObstacle()){
-    long timer1 = millis();
-    while(millis()-timer1<100){
-      stepperLeft.runSpeed();
-      stepperRight.runSpeed();
-    }
-  }
-  long timer2 = millis();
-  while(millis()-timer2<4000){
-    stepperLeft.runSpeed();
-    stepperRight.runSpeed();
-  }
-
-  spin(CLOCKWISE,angle);
-}
-
 
 /*
  * getLinearizedDistance(sensorPin)
@@ -1069,7 +1110,6 @@ void pivot(boolean clockwise, double dgrees) {
     setSpeeds(0,sgn(steps)*spinSpeed);
   }
 
-//  runSpeedToActualPosition(); // Blocks until all are in position
   steppers.runSpeedToPosition(); // Blocks until all are in position
 }
 
@@ -1094,7 +1134,7 @@ void spin(boolean clockwise, double dgrees) {
     stepperRight.moveTo(steps+stepperRight.currentPosition());
     setSpeeds(-spinSpeed,spinSpeed);
   }
-//  runSpeedToActualPosition(); // Blocks until all are in position
+
   steppers.runSpeedToPosition(); // Blocks until all are in position
 }
 
@@ -1119,7 +1159,6 @@ void forward(double distance) {
     setSpeeds(fwdSpeed,fwdSpeed);
   }
 
-//  runSpeedToActualPosition(); // Blocks until all are in position
   steppers.runSpeedToPosition(); // Blocks until all are in position
 }
 
@@ -1174,80 +1213,4 @@ static inline int8_t sgn(double val) {
   if (val < 0) return -1;
   if (val==0) return 0;
   return 1;
-}
-
-/*
- * runSpeedToActualPosition()
- * 
- * This function imitates the behavior of Multistepper's runSpeedToPosition() function,
- * but it has a decceleration at the end of the motion in order to prevent slippage. 
- * 
- * The steppers need to have a speed and position set before this function is run:
- * Use stepper.moveTo() and stepper.setSpeed() before this function
- * 
- * BLOCKING FUNCTION
- */
-void runSpeedToActualPosition(){
-  boolean runLeft = true;
-  boolean runRight = true;
-  while(runLeft || runRight){
-    if(runLeft){
-      if(abs(stepperLeft.distanceToGo())<=10){
-        runLeft = false;
-        stepperLeft.setSpeed(0);
-      }
-      else if(abs(stepperLeft.distanceToGo())<=50){
-        stepperLeft.setSpeed(sgn(stepperLeft.distanceToGo())*50);
-        stepperLeft.runSpeed();
-      }
-      else if(abs(stepperLeft.distanceToGo())<abs(stepperLeft.speed())){
-        stepperLeft.setSpeed(stepperLeft.distanceToGo());
-        stepperLeft.runSpeed();
-      }else {
-        stepperLeft.runSpeed();
-      }
-    }
-    if(runRight){
-      if(abs(stepperRight.distanceToGo())<=10){
-        runRight = false;
-        stepperRight.setSpeed(0);
-      }
-      else if(abs(stepperRight.distanceToGo())<=50){
-        stepperRight.setSpeed(sgn(stepperRight.distanceToGo())*50);
-        stepperRight.runSpeed();
-      }
-      else if(abs(stepperRight.distanceToGo())<abs(stepperRight.speed())){
-        stepperRight.setSpeed(stepperRight.distanceToGo());
-        stepperRight.runSpeed();
-      }
-      else{
-        stepperRight.runSpeed();
-      }
-    }
-  }
-}
-
-/*This function, runToStop(), will run the robot until the target is achieved and
-   then stop it
-
-   BLOCKING FUNCTION
-*/
-void runToStop ( void ) {
-  int runNow = 1;
-  int rightStopped = 0;
-  int leftStopped = 0;
-
-  while (runNow) {
-    if (!stepperRight.run()) {
-      rightStopped = 1;
-      stepperRight.stop();//stop right motor
-    }
-    if (!stepperLeft.run()) {
-      leftStopped = 1;
-      stepperLeft.stop();//stop left motor
-    }
-    if (rightStopped && leftStopped) {
-      runNow = 0;
-    }
-  }
 }
